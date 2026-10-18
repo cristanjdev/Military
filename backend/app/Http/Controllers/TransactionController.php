@@ -40,8 +40,24 @@ class TransactionController extends Controller
                       ->orWhereHas('firearm', fn($f) => $f->where('serial_number', 'like', $like)
                             ->orWhere('model', 'like', $like));
                 });
-            })
-            ->latest('checkout_at');
+            });
+
+        // Column sorting from the table headers; newest checkout first by default.
+        $dir = $request->string('dir')->lower()->value() === 'asc' ? 'asc' : 'desc';
+        match ($request->string('sort')->value()) {
+            'transaction'     => $q->orderBy('transaction_id', $dir),
+            'firearm'         => $q->orderBy(FirearmEquipment::select('serial_number')
+                ->whereColumn('firearm_equipment.equipment_id', 'transactions.equipment_id'), $dir),
+            'personnel'       => $q->orderBy(User::select('last_name')
+                ->whereColumn('users.user_id', 'transactions.user_id'), $dir)
+                ->orderBy(User::select('first_name')
+                    ->whereColumn('users.user_id', 'transactions.user_id'), $dir),
+            'purpose'         => $q->orderBy('purpose', $dir),
+            'expected_return' => $q->orderBy('expected_return_at', $dir),
+            'status'          => $q->orderBy('status', $dir),
+            default           => $q->orderBy('checkout_at', $dir),
+        };
+        $q->orderBy('transaction_id', $dir);
 
         return response()->json($q->paginate($request->integer('per_page', 15)));
     }

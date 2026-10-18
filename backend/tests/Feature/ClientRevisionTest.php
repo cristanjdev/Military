@@ -204,6 +204,46 @@ class ClientRevisionTest extends TestCase
         $this->getJson('/api/v1/transactions?search=zzz-no-such-thing')->assertOk()->assertJsonPath('total', 0);
     }
 
+    public function test_transactions_can_be_sorted_by_each_column(): void
+    {
+        $this->actAs('armory.custodian');
+        $all = Transaction::with(['user', 'firearm'])->get();
+        $this->assertGreaterThan(1, $all->count());
+
+        $ids = fn(string $query) => array_column(
+            $this->getJson("/api/v1/transactions?per_page=100&{$query}")->assertOk()->json('data'),
+            'transaction_id'
+        );
+
+        $this->assertSame($all->sortBy('transaction_id')->pluck('transaction_id')->values()->all(), $ids('sort=transaction&dir=asc'));
+        $this->assertSame($all->sortByDesc('transaction_id')->pluck('transaction_id')->values()->all(), $ids('sort=transaction&dir=desc'));
+
+        $byDate = fn(string $column, string $dir) => array_map(
+            fn($id) => (string) $all->firstWhere('transaction_id', $id)->{$column},
+            $ids("sort=" . ($column === 'checkout_at' ? 'checkout' : 'expected_return') . "&dir={$dir}")
+        );
+        foreach (['checkout_at', 'expected_return_at'] as $column) {
+            $asc = $byDate($column, 'asc');
+            $sorted = $asc;
+            sort($sorted);
+            $this->assertSame($sorted, $asc, "{$column} ascending");
+            $desc = $byDate($column, 'desc');
+            rsort($sorted);
+            $this->assertSame($sorted, $desc, "{$column} descending");
+        }
+
+        $serials = array_map(
+            fn($id) => $all->firstWhere('transaction_id', $id)->firearm->serial_number,
+            $ids('sort=firearm&dir=asc')
+        );
+        $sorted = $serials;
+        sort($sorted, SORT_STRING | SORT_FLAG_CASE);
+        $this->assertSame($sorted, $serials);
+
+        // Unknown sort keys fall back to newest checkout first instead of erroring.
+        $this->getJson('/api/v1/transactions?sort=password&dir=sideways')->assertOk();
+    }
+
     public function test_personnel_search_stays_limited_to_their_own_transactions(): void
     {
         $me = $this->actAs('pvt.dela.cruz');

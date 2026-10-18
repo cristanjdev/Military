@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { ChevronLeft, ChevronRight, MapPin, RotateCcw } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, MapPin, RotateCcw } from "lucide-react";
 import { DataError } from "@/components/ui/data-error";
 import { fmtDate, PURPOSES, cn } from "@/lib/utils";
 
@@ -40,6 +40,17 @@ export interface TransactionRow {
   authorizer?: TransactionPerson | null;
 }
 
+export type TransactionSortKey =
+  | "transaction"
+  | "firearm"
+  | "personnel"
+  | "purpose"
+  | "checkout"
+  | "expected_return"
+  | "status";
+
+export type SortDirection = "asc" | "desc";
+
 export interface LaravelPage<T> {
   data: T[];
   current_page: number;
@@ -64,7 +75,20 @@ interface TransactionLedgerProps {
   onReturn: (transaction: TransactionRow) => void;
   onLocate?: (transaction: TransactionRow) => void;
   onPageChange: (page: number) => void;
+  sort: TransactionSortKey;
+  dir: SortDirection;
+  onSort: (key: TransactionSortKey) => void;
 }
+
+const COLUMNS: Array<{ key: TransactionSortKey; label: string }> = [
+  { key: "transaction", label: "Transaction" },
+  { key: "firearm", label: "Firearm" },
+  { key: "personnel", label: "Personnel" },
+  { key: "purpose", label: "Purpose" },
+  { key: "checkout", label: "Checkout" },
+  { key: "expected_return", label: "Expected Return" },
+  { key: "status", label: "Status" },
+];
 
 function personName(person?: TransactionPerson | null): string {
   if (!person) return "Unknown";
@@ -91,8 +115,13 @@ export function TransactionLedger({
   onReturn,
   onLocate,
   onPageChange,
+  sort,
+  dir,
+  onSort,
 }: TransactionLedgerProps) {
-  const columnCount = canAct ? 8 : 7;
+  const showLocate = canLocate && !!onLocate;
+  const showActions = canAct || showLocate;
+  const columnCount = showActions ? 8 : 7;
   const rows = page?.data ?? [];
 
   return (
@@ -100,14 +129,31 @@ export function TransactionLedger({
       <table className="w-full text-sm">
         <thead>
           <tr className="text-[10px] uppercase tracking-widest text-olive-300">
-            <th className="text-left py-2 px-3">Transaction</th>
-            <th className="text-center py-2 px-3">Firearm</th>
-            <th className="text-center py-2 px-3">Personnel</th>
-            <th className="text-center py-2 px-3">Purpose</th>
-            <th className="text-center py-2 px-3">Checkout</th>
-            <th className="text-center py-2 px-3">Expected Return</th>
-            <th className="text-center py-2 px-3">Status</th>
-            {canAct && <th className="text-center py-2 px-3">Action</th>}
+            {COLUMNS.map((column) => {
+              const active = sort === column.key;
+              const Icon = !active ? ArrowUpDown : dir === "asc" ? ArrowUp : ArrowDown;
+              return (
+                <th
+                  key={column.key}
+                  className="text-center py-2 px-3"
+                  aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+                >
+                  <button
+                    type="button"
+                    onClick={() => onSort(column.key)}
+                    title={`Sort by ${column.label.toLowerCase()}`}
+                    className={cn(
+                      "inline-flex items-center gap-1 uppercase tracking-widest transition hover:text-olive-100",
+                      active && "text-olive-100"
+                    )}
+                  >
+                    {column.label}
+                    <Icon className={cn("h-3 w-3", active ? "opacity-100" : "opacity-40")} />
+                  </button>
+                </th>
+              );
+            })}
+            {showActions && <th className="text-center py-2 px-3">Action</th>}
           </tr>
         </thead>
 
@@ -153,14 +199,14 @@ export function TransactionLedger({
             const canReturn = canAct && (t.status === "Active" || t.status === "Overdue");
             const isOverdue = t.status === "Overdue";
             const isOpen = t.status === "Active" || isOverdue;
-            const locatable = canLocate && !!onLocate && isOpen && t.gps_tracking_enabled;
+            const locatable = showLocate && isOpen && t.gps_tracking_enabled;
 
             return (
               <tr
                 key={t.transaction_id}
                 className="border-t border-steel-800 hover:bg-steel-800/30 transition-colors"
               >
-                <td className="py-2.5 px-3 font-mono text-xs font-semibold text-olive-200 whitespace-nowrap">
+                <td className="text-center py-2.5 px-3 font-mono text-xs font-semibold text-olive-200 whitespace-nowrap">
                   #{t.transaction_id}
                 </td>
 
@@ -168,21 +214,7 @@ export function TransactionLedger({
                   <div className="inline-flex items-center gap-1.5 font-mono text-xs">
                     <span className="font-semibold text-olive-100">{t.firearm?.serial_number ?? "—"}</span>
                     {t.firearm?.model && <span className="text-steel-400 text-xs">({t.firearm.model})</span>}
-                    {locatable ? (
-                      <button
-                        type="button"
-                        onClick={() => onLocate!(t)}
-                        title="Show where this firearm is and who has it"
-                        className={cn(
-                          "inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-sans font-semibold transition",
-                          isOverdue
-                            ? "border-red-500/60 bg-red-900/30 text-red-200 hover:bg-red-800/40 animate-pulse"
-                            : "border-emerald-600/50 bg-emerald-900/20 text-emerald-300 hover:bg-emerald-800/30"
-                        )}
-                      >
-                        <MapPin className="h-3 w-3" /> {isOverdue ? "Locate" : "GPS"}
-                      </button>
-                    ) : t.gps_tracking_enabled && (
+                    {t.gps_tracking_enabled && !locatable && (
                       <span className="text-[10px] text-emerald-400 font-sans" title="GPS active">
                         ● GPS
                       </span>
@@ -220,17 +252,36 @@ export function TransactionLedger({
                   </span>
                 </td>
 
-                {canAct && (
+                {showActions && (
                   <td className="text-center py-2.5 px-3 whitespace-nowrap">
-                    {canReturn ? (
-                      <button
-                        type="button"
-                        onClick={() => onReturn(t)}
-                        className="btn-secondary px-2.5 py-1 text-xs inline-flex items-center gap-1"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                        <span>Return</span>
-                      </button>
+                    {locatable || canReturn ? (
+                      <div className="inline-flex items-center gap-1.5">
+                        {locatable && (
+                          <button
+                            type="button"
+                            onClick={() => onLocate!(t)}
+                            title="Show where this firearm is and who has it"
+                            className={cn(
+                              "inline-flex items-center gap-1 rounded-md border px-2.5 py-1 text-xs font-semibold transition",
+                              isOverdue
+                                ? "border-red-500/60 bg-red-900/30 text-red-200 hover:bg-red-800/40 animate-pulse"
+                                : "border-emerald-600/50 bg-emerald-900/20 text-emerald-300 hover:bg-emerald-800/30"
+                            )}
+                          >
+                            <MapPin className="h-3 w-3" /> {isOverdue ? "Locate" : "GPS"}
+                          </button>
+                        )}
+                        {canReturn && (
+                          <button
+                            type="button"
+                            onClick={() => onReturn(t)}
+                            className="btn-secondary px-2.5 py-1 text-xs inline-flex items-center gap-1"
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            <span>Return</span>
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <span className="text-steel-600 text-xs">—</span>
                     )}

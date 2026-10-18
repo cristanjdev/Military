@@ -13,8 +13,10 @@ import { ActionModal } from "@/components/ui/action-modal";
 import { confirmBiometric, isBiometricCancelled } from "@/store/biometric-confirm";
 import {
   LaravelPage,
+  SortDirection,
   TransactionLedger,
   TransactionRow,
+  TransactionSortKey,
   TransactionStatus,
 } from "@/components/transactions/transaction-ledger";
 import { LocateFirearmModal } from "@/components/transactions/locate-firearm-modal";
@@ -95,6 +97,19 @@ function TransactionsContent() {
   const [locateTarget, setLocateTarget] = useState<TransactionRow | null>(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<TransactionSortKey>("checkout");
+  const [dir, setDir] = useState<SortDirection>("desc");
+
+  // Clicking the sorted column flips the order; a new column starts ascending (dates newest first).
+  const changeSort = (key: TransactionSortKey) => {
+    if (key === sort) {
+      setDir((current) => (current === "asc" ? "desc" : "asc"));
+    } else {
+      setSort(key);
+      setDir(key === "checkout" || key === "expected_return" || key === "transaction" ? "desc" : "asc");
+    }
+    setPage(1);
+  };
 
   // Search as the user types, without a request per keystroke.
   useEffect(() => {
@@ -106,12 +121,14 @@ function TransactionsContent() {
   }, [searchInput]);
 
   const transactionQuery = useQuery<LaravelPage<TransactionRow>>({
-    queryKey: ["transactions", status, page, equipmentId, userId, search],
+    queryKey: ["transactions", status, page, equipmentId, userId, search, sort, dir],
     queryFn: async () => (
       await api.get<LaravelPage<TransactionRow>>("/transactions", {
         params: {
           status: status || undefined,
           search: search || undefined,
+          sort,
+          dir,
           equipment_id: equipmentId,
           user_id: userId,
           page,
@@ -272,10 +289,6 @@ function TransactionsContent() {
                   </button>
                 )}
               </div>
-              <p className="text-xs text-steel-400 whitespace-nowrap" aria-live="polite">
-                <span className="font-semibold text-steel-100">{transactionQuery.data?.total ?? 0}</span>{" "}
-                {transactionQuery.data?.total === 1 ? "record" : "records"}
-              </p>
               <button
                 type="button"
                 onClick={() => transactionQuery.refetch()}
@@ -341,6 +354,9 @@ function TransactionsContent() {
             setReturnCondition(2);
           }}
           onPageChange={setPage}
+          sort={sort}
+          dir={dir}
+          onSort={changeSort}
         />
       </div>
 
