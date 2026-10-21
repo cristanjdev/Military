@@ -55,6 +55,8 @@ docs/*
 
 # IoT device secrets: Wi-Fi password and shared HMAC secret live in config.h
 iot/firmware/**/config.h
+# Compiled firmware (Arduino "Export compiled binary" / arduino-cli -e): it embeds config.h's secrets
+iot/firmware/**/build/
 # Biometric bridge: local secret + build output
 biometric-bridge/bridge.settings.json
 biometric-bridge/bin/
