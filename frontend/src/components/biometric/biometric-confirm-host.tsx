@@ -6,7 +6,13 @@ import { AxiosError } from "axios";
 import { Check, Fingerprint, Loader2, X } from "lucide-react";
 import { api } from "@/lib/api";
 import { BiometricCancelled, PendingConfirmation, useBiometricConfirm } from "@/store/biometric-confirm";
-import { captureFingerprintTemplate, probeBridge, useBridgeProgress, type BridgeMode } from "@/lib/biometric-bridge";
+import {
+  BRIDGE_NOT_RUNNING,
+  captureFingerprintTemplate,
+  probeBridgeDetail,
+  useBridgeProgress,
+  type BridgeMode,
+} from "@/lib/biometric-bridge";
 
 // How long the "accepted" tick shows before the action continues.
 const SUCCESS_DELAY_MS = 1200;
@@ -85,11 +91,11 @@ function ConfirmDialog({ pending }: { pending: PendingConfirmation }) {
   // Start scanning as soon as the popup opens, if the scanner program is reachable.
   useEffect(() => {
     let alive = true;
-    probeBridge().then((result) => {
+    probeBridgeDetail().then(({ mode: result, message }) => {
       if (!alive) return;
       setMode(result);
       if (result === "unavailable") {
-        setError("The fingerprint scanner program is not running on this computer. Start the biometric bridge, then try again.");
+        setError(message ?? BRIDGE_NOT_RUNNING);
         setPhase("failed");
         return;
       }
@@ -112,10 +118,10 @@ function ConfirmDialog({ pending }: { pending: PendingConfirmation }) {
 
   function retry() {
     setPhase("starting");
-    probeBridge().then((result) => {
+    probeBridgeDetail().then(({ mode: result, message }) => {
       setMode(result);
       if (result === "unavailable") {
-        setError("The fingerprint scanner program is not running on this computer. Start the biometric bridge, then try again.");
+        setError(message ?? BRIDGE_NOT_RUNNING);
         setPhase("failed");
         setCooldown(FAILURE_COOLDOWN_SECONDS);
       } else {

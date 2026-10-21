@@ -40,10 +40,32 @@ namespace ArmoryBiometricBridge
             public string Serial;
         }
 
+        /// <summary>
+        /// Shown when the SDK itself cannot start ("Failed to initialize"). The .NET wrappers load,
+        /// but the DigitalPersona runtime they call is missing or its Windows service is stopped.
+        /// </summary>
+        public const string SdkUnavailableMessage =
+            "The DigitalPersona fingerprint service is not running on this computer. " +
+            "Restart the computer, or open services.msc and start \"Biometric Authentication Service\" (DpHost). " +
+            "If that service is missing, reinstall the One Touch for Windows SDK (Install\\x64\\Setup.exe) and restart.";
+
+        /// <summary>Opens the SDK's reader list, turning an SDK start-up failure into a 503 with the fix.</summary>
+        private static ReadersCollection OpenReaders()
+        {
+            try
+            {
+                return new ReadersCollection();
+            }
+            catch (DPFP.Error.SDKException ex)
+            {
+                throw new CaptureException(503, SdkUnavailableMessage + " (SDK: " + ex.Message + ")");
+            }
+        }
+
         public List<ReaderInfo> ListReaders()
         {
             var result = new List<ReaderInfo>();
-            var readers = new ReadersCollection();
+            var readers = OpenReaders();
             foreach (var r in readers.Values)
             {
                 result.Add(new ReaderInfo { Product = r.ProductName, Vendor = r.Vendor, Serial = r.SerialNumber });
@@ -146,7 +168,7 @@ namespace ArmoryBiometricBridge
                     while (_busy && DateTime.UtcNow < giveUp) Monitor.Wait(_gate, 100);
                     if (_busy) throw new CaptureException(409, "The fingerprint reader is still busy. Wait a few seconds and try again.");
                 }
-                if (new ReadersCollection().Count == 0)
+                if (OpenReaders().Count == 0)
                     throw new CaptureException(503, "No fingerprint reader is connected. Plug in the U.are.U reader and try again.");
                 _busy = true;
             }

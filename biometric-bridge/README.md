@@ -43,8 +43,15 @@ running the bridge. A user enrolled on one workstation must re-enroll on another
 | Command | What it does |
 |---|---|
 | `start-bridge.bat test` | Enroll a throwaway finger (4 touches), then 3 verify attempts. No website needed. |
-| `curl http://127.0.0.1:8787/health` | `200` = reader connected, `503` = no reader |
+| `curl http://127.0.0.1:8787/health` | `200` = reader connected, `503` = not ready; `message` says why (no reader, or SDK service stopped) |
 | `bin\Release\ArmoryBiometricBridge.exe --reset <username>` | Delete a user's local enrollment |
+
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| `[reader] ERROR: The DigitalPersona fingerprint service is not running` (older builds: crash with `DPFP.Error.SDKException: Failed to initialize`) | The SDK's Windows service is stopped or missing. `Get-Service DpHost` must say Running; start it from `services.msc` ("Biometric Authentication Service"), or restart Windows after installing the SDK. If the service does not exist, reinstall the SDK. |
+| `[reader] none connected` | Plug the reader in; Device Manager must list it under Biometric devices with the DigitalPersona driver. |
 
 ## Endpoints
 

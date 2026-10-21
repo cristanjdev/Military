@@ -4,6 +4,7 @@ import { MapContainer, TileLayer, Marker, Popup, Circle, ZoomControl, useMap } f
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import L from "leaflet";
+import "./leaflet-guards";
 import Link from "next/link";
 import { ArrowRight, Crosshair, LocateFixed, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";

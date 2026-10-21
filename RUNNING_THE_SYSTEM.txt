@@ -198,6 +198,19 @@ U.are.U fingerprint reader. It needs two things installed once:
 
       Get-PnpDevice -PresentOnly | Where-Object FriendlyName -match "U.are.U|Fingerprint" | Format-Table Status, FriendlyName
 
+  Check the DigitalPersona service is running (Status must be "Running"):
+
+      Get-Service DpHost
+
+  "Stopped" -> start it and make it start with Windows (click "Yes" on the
+  permission prompt):
+
+      Start-Process powershell -Verb RunAs -ArgumentList '-Command', 'Set-Service DpHost -StartupType Automatic; Start-Service DpHost'
+
+  "Cannot find any service with service name 'DpHost'" -> the SDK install
+  did not finish: run 4.2 again, then restart Windows.
+  Without this service the bridge cannot use the reader at all.
+
 4.3  Install the .NET SDK (one time)
   Check first - if this prints any version, skip to 4.4:
 
@@ -237,7 +250,14 @@ U.are.U fingerprint reader. It needs two things installed once:
 
       curl.exe http://127.0.0.1:8787/health
 
-  200 = reader connected     503 = bridge running but no reader plugged in
+  200 = reader connected     503 = bridge running but not ready; the
+                                   "message" says why (no reader plugged in,
+                                   or the DigitalPersona service is stopped)
+
+  If the bridge prints "[reader] ERROR: The DigitalPersona fingerprint
+  service is not running" (older builds crashed instead with
+  "DPFP.Error.SDKException: Failed to initialize"), do the DpHost check at
+  the end of 4.2, or simply restart Windows after installing the SDK.
 
   Try the reader without the website (enroll a test finger, then verify):
 

@@ -3,6 +3,7 @@
 import { MapContainer, TileLayer, Circle, Marker, useMapEvents, useMap, ZoomControl } from "react-leaflet";
 import { useEffect } from "react";
 import L from "leaflet";
+import "./leaflet-guards";
 import { useMapMountKey } from "./use-map-mount-key";
 import { MapResizeObserver } from "./map-resize-observer";
 import { TILE_ATTRIBUTION, TILE_DARKEN_CLASS, TILE_MAX_ZOOM, TILE_URL } from "./tiles";

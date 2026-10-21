@@ -104,7 +104,17 @@ namespace ArmoryBiometricBridge
 
         private static void PrintReaders()
         {
-            var readers = Reader.ListReaders();
+            List<FingerprintReader.ReaderInfo> readers;
+            try
+            {
+                readers = Reader.ListReaders();
+            }
+            catch (CaptureException ex)
+            {
+                // Keep serving: the website then shows this reason instead of "bridge not running".
+                Console.WriteLine("[reader] ERROR: " + ex.Message);
+                return;
+            }
             if (readers.Count == 0)
             {
                 Console.WriteLine("[reader] none connected - plug in the U.are.U reader");
@@ -145,12 +155,30 @@ namespace ArmoryBiometricBridge
 
                     if (req.Method == "GET" && req.Path == "/health")
                     {
-                        var readers = Reader.ListReaders();
+                        List<FingerprintReader.ReaderInfo> readers;
+                        try
+                        {
+                            readers = Reader.ListReaders();
+                        }
+                        catch (CaptureException ex)
+                        {
+                            Write(stream, 503, new Dictionary<string, object>
+                            {
+                                ["status"] = "sdk_unavailable",
+                                ["reader_connected"] = false,
+                                ["message"] = ex.Message,
+                                ["sdk"] = "DigitalPersona One Touch for Windows 1.4",
+                            }, allowedOrigin);
+                            return;
+                        }
                         Write(stream, readers.Count > 0 ? 200 : 503, new Dictionary<string, object>
                         {
                             ["status"] = readers.Count > 0 ? "ok" : "no_reader",
                             ["reader_connected"] = readers.Count > 0,
                             ["readers"] = readers.Select(r => $"{r.Vendor} {r.Product}".Trim()).ToArray(),
+                            ["message"] = readers.Count > 0
+                                ? "Fingerprint reader ready."
+                                : "No fingerprint reader is connected. Plug in the U.are.U reader and try again.",
                             ["sdk"] = "DigitalPersona One Touch for Windows 1.4",
                         }, allowedOrigin);
                         return;

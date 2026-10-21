@@ -40,18 +40,36 @@ export type BridgeProgress = {
   seq: number;
 };
 
-/** Is the bridge reachable? Falls back to the placeholder only when demo mode is explicitly on. */
-export async function probeBridge(): Promise<Exclude<BridgeMode, "checking">> {
+export const BRIDGE_NOT_RUNNING =
+  "The fingerprint scanner program is not running on this computer. Start the biometric bridge, then try again.";
+
+export type BridgeProbe = {
+  mode: Exclude<BridgeMode, "checking">;
+  /** Why the scanner can't be used, when the bridge is running but not ready (no reader, SDK service stopped). */
+  message?: string;
+};
+
+/** Is the bridge reachable and ready? Falls back to the placeholder only when demo mode is explicitly on. */
+export async function probeBridgeDetail(): Promise<BridgeProbe> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 1500);
   try {
     const resp = await fetch(`${BRIDGE_URL}/health`, { cache: "no-store", signal: controller.signal });
-    return resp.ok ? "bridge" : DEMO_MODE ? "demo" : "unavailable";
+    if (resp.ok) return { mode: "bridge" };
+    const data = await resp.json().catch(() => ({})) as { message?: unknown };
+    return {
+      mode: DEMO_MODE ? "demo" : "unavailable",
+      message: typeof data.message === "string" ? data.message : undefined,
+    };
   } catch {
-    return DEMO_MODE ? "demo" : "unavailable";
+    return { mode: DEMO_MODE ? "demo" : "unavailable" };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function probeBridge(): Promise<Exclude<BridgeMode, "checking">> {
+  return (await probeBridgeDetail()).mode;
 }
 
 /**

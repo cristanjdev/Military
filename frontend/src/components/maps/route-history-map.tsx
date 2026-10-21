@@ -3,6 +3,7 @@
 import { MapContainer, TileLayer, Marker, Popup, ZoomControl, Circle, useMap } from "react-leaflet";
 import { useEffect, useMemo } from "react";
 import L from "leaflet";
+import "./leaflet-guards";
 import { MapPin } from "lucide-react";
 import { fmtRelative, cn } from "@/lib/utils";
 import { useMapMountKey } from "./use-map-mount-key";
