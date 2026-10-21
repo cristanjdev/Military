@@ -282,14 +282,6 @@ echo   cmd.officer      / Command@2025!      (Command Officer)
 echo   s4.officer       / S4Logistics@2025!  (S4 Officer)
 echo   armory.custodian / Custodian@2025!    (Armory Custodian)
 echo.
-echo To start the system in the future, you can simply run:
-echo   start.bat
-echo.
-set /p START_NOW="Would you like to start the application now? (Y/N): "
-if /I "%START_NOW%"=="Y" (
-    call "%~dp0start.bat"
-) else (
-    echo.
-    echo Setup is done. You can start the app anytime using start.bat!
-    pause
-)
+echo Setup is done. To start the system, follow RUNNING_THE_SYSTEM.txt
+echo (MySQL, then the backend and the frontend in their own terminals).
+pause

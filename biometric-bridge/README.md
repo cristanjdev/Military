@@ -34,7 +34,7 @@ running the bridge. A user enrolled on one workstation must re-enroll on another
 1. `copy bridge.settings.example.json bridge.settings.json`
 2. Put a 32+ character random value in `hmac_secret`, and the **same** value in
    `backend/.env` as `BIOMETRIC_BRIDGE_HMAC_SECRET`, then `php artisan config:clear`.
-3. `start-bridge.bat` (builds on first run). `start.bat` at the repo root also starts it.
+3. `start-bridge.bat` (builds on first run), or the steps in `RUNNING_THE_SYSTEM.txt` section 4.
 
 `bridge.settings.json` is git-ignored. In JSON paths use `/` or `\\`.
 

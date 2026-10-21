@@ -122,14 +122,9 @@ Please refer to the credentials document given by the developer.
 DAILY USE (After Initial Setup)
 ============================================================
 
-Every time you want to use the system:
+Every time you want to use the system
+(full details: RUNNING_THE_SYSTEM.txt):
 
-OPTION A (Easiest - 1 Click):
-Double-click "start.bat" in the project folder.
-It will automatically check MySQL, start both servers in
-separate windows, and open http://localhost:3000 in your browser!
-
-OPTION B (Manual):
 1. Open XAMPP Control Panel and start MySQL
 2. Open Terminal 1:
    cd backend
