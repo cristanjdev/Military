@@ -1,0 +1,26 @@
+admin --admin
+Admin@10RCDG!2025
+
+cmd.officer --Command Officer
+Command@2025! 
+
+s4.officer --S4 Officer
+S4Logistics@2025!
+
+armory.custodian --Armory Custodian
+Custodian@2025!
+
+pvt.dela.cruz --Personnel
+Personnel@2025!
+
+cpl.santos --Personnel
+Personnel@2025!
+
+
+-starting commands
+
+cd frontend
+npm run dev
+
+cd backend
+php artisan serve

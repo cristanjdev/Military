@@ -14,6 +14,7 @@ use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\TransactionController;
 use App\Http\Controllers\UserController;
+use App\Http\Middleware\RecordTrackerTraffic;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -25,9 +26,17 @@ use Illuminate\Support\Facades\Route;
 */
 
 // IoT GPS ingest has its own higher bucket and is not nested under the user API limiter.
+// RecordTrackerTraffic notes each request and answer in storage/logs/trackers.log (the setup
+// tool shows it live); it comes first so it also sees the rate limiter's own answers.
 Route::prefix('v1')->group(function () {
     Route::post('gps/ingest', [GpsController::class, 'ingest'])
-        ->middleware('rate.strict:60');
+        ->middleware([RecordTrackerTraffic::class, 'rate.strict:60']);
+    Route::post('gps/status', [GpsController::class, 'status'])
+        ->middleware([RecordTrackerTraffic::class, 'rate.strict:60']);
+    // Firmware update over Wi-Fi, after a report was answered with an offer (TrackerFirmware).
+    Route::get('gps/firmware/{device}', [GpsController::class, 'firmware'])
+        ->where('device', '[A-Za-z0-9_.-]{1,64}')
+        ->middleware('rate.strict:5');
 });
 
 Route::middleware('rate.strict')->prefix('v1')->group(function () {

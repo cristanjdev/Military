@@ -8,12 +8,15 @@ use App\Models\GpsLog;
 use App\Models\Notification;
 use App\Models\Transaction;
 use App\Services\AuditLogger;
+use App\Services\TrackerFirmware;
+use App\Services\TrackerLog;
 use App\Services\TrackerWatchdog;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\Response;
 
 class GpsController extends Controller
 {
@@ -218,6 +221,62 @@ class GpsController extends Controller
 
             throw $exception;
         }
+    }
+
+    /**
+     * IoT STATUS — called by the ESP32 while it has no position to send (no fix yet, GPS wiring
+     * fault). The body carries the status line it prints on USB, e.g. "[gps] no fix yet
+     * (satellites in view=15, used=3)". Signed like ingest. Nothing is stored in the database:
+     * RecordTrackerTraffic writes the line to storage/logs/trackers.log, where the setup tool
+     * shows it, so a tracker on a hotspot can be checked without a USB cable.
+     */
+    public function status(Request $request): JsonResponse
+    {
+        $secret = (string) config('armory.iot.hmac_secret');
+        if ($secret === '') {
+            return response()->json(['message' => 'IoT secret not configured.'], 503);
+        }
+        $expected = hash_hmac('sha256', $request->getContent(), $secret);
+        if (! hash_equals($expected, (string) $request->header('X-Armory-Signature', ''))) {
+            return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+
+        $request->validate([
+            'device_id'          => ['required', 'string', 'max:64'],
+            'line'               => ['required', 'string', 'max:300'],
+            'satellites_in_view' => ['nullable', 'integer', 'min:0', 'max:255'],
+            'satellites_used'    => ['nullable', 'integer', 'min:0', 'max:64'],
+            'rssi'               => ['nullable', 'integer', 'between:-127,0'],
+        ]);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
+     * IoT FIRMWARE — the update waiting for this tracker (TrackerFirmware), downloaded after its
+     * report was answered with an "update" offer. The request is signed: X-Armory-Signature is the
+     * HMAC of "firmware:<device>:<build>", since the binary holds the Wi-Fi password and the secret.
+     */
+    public function firmware(Request $request, string $device): JsonResponse|Response
+    {
+        $update = TrackerFirmware::pending($device);
+        if (! $update) {
+            return response()->json(['message' => 'No firmware update is waiting for this tracker.'], 404);
+        }
+        $expected = TrackerFirmware::expectedSignature($device, (string) $update['build']);
+        if (! hash_equals($expected, (string) $request->header('X-Armory-Signature', ''))) {
+            return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+        TrackerLog::write($device, sprintf('[ota] the tracker is downloading the new firmware (%d KB)', $update['size'] / 1024));
+
+        // A plain response (not a file download): the rate limiter adds headers through Laravel's response API.
+        // The tracker checks the length before installing; php artisan serve does not send it by itself.
+        $binary = (string) file_get_contents(TrackerFirmware::binPath($device));
+
+        return response($binary, 200, [
+            'Content-Type'   => 'application/octet-stream',
+            'Content-Length' => (string) strlen($binary),
+        ]);
     }
 
     /**

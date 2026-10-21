@@ -1,10 +1,14 @@
 # ArmoryDB tracker setup.
 #
-# Window: type the hotspot's Wi-Fi name and password; this laptop's IP address and the ESP32's COM port
-# are detected automatically. "Save to tracker" writes them into config.h and flashes the ESP32 with
-# "Erase All Flash" (which also clears any Wi-Fi / address saved earlier from the phone setup page, so
-# the board uses config.h), then checks that the tracker joins the Wi-Fi.
-# When the window closes, the same terminal shows the tracker's live status until Ctrl+C.
+# Window: pick the hotspot's Wi-Fi; its password is filled in when this laptop has it saved. This laptop's
+# IP address and the ESP32's COM port are detected automatically and follow plug / network changes.
+# "Save to tracker" writes them into config.h and flashes the ESP32 with "Erase All Flash" (which also
+# clears any Wi-Fi / address saved earlier from the phone setup page, so the board uses config.h), then
+# checks that the tracker joins the Wi-Fi, that its GPS module talks and that it reaches this laptop.
+# When the window closes, the same terminal shows the tracker's live status until Ctrl+C. Live status
+# comes over USB while the tracker is plugged in, and over Wi-Fi otherwise (the tracker reports to the
+# backend, which notes it in backend\storage\logs\trackers.log). It steps aside by itself while a setup
+# window uses the tracker's USB port (upload or Watch live).
 #
 # Usage (from the project folder):
 #   iot\setup-tracker.bat            window, then live status
@@ -20,10 +24,19 @@ $SketchDir  = Join-Path $IotDir 'firmware\armory_tracker'
 $ConfigH    = Join-Path $SketchDir 'config.h'
 $ExampleH   = Join-Path $SketchDir 'config.example.h'
 $BackendEnv = Join-Path $RepoRoot 'backend\.env'
+# What trackers report over Wi-Fi, one line each, written by the backend (App\Services\TrackerLog).
+$TrackerLog = Join-Path $RepoRoot 'backend\storage\logs\trackers.log'
 $Fqbn       = 'esp32:esp32:esp32'
 $ApiPort    = 8000
+# Without a USB cable, Save builds into $BuildDir and leaves the firmware in $FirmwareDir; the backend offers
+# it to the tracker in answer to its next report (App\Services\TrackerFirmware).
+$BuildDir    = Join-Path $env:TEMP 'armory-tracker-build'
+$FirmwareDir = Join-Path $RepoRoot 'backend\storage\app\firmware'
 $OutLog     = Join-Path $env:TEMP 'armory-tracker-flash.out.log'
 $ErrLog     = Join-Path $env:TEMP 'armory-tracker-flash.err.log'
+# Held by a setup window while it uses the tracker's port (upload and check, or Watch live);
+# live-status terminals let go of the port meanwhile.
+$PortLockName = 'Local\ArmoryTrackerPort'
 
 # Non-ASCII glyphs as code points: Windows PowerShell reads a BOM-less script as ANSI.
 $G = @{
@@ -69,7 +82,27 @@ function Get-VisibleNetworks {
             $result[$current] = $true
         }
     }
+    # Windows' list can lag behind a hotspot that was just switched on; the one this laptop is on is in range.
+    $laptop = Get-LaptopWifi
+    if ($laptop.Ssid -and -not $result.Contains($laptop.Ssid)) { $result[$laptop.Ssid] = [bool]($laptop.Band -match '2\.4') }
     return $result
+}
+
+# The password Windows saved for this Wi-Fi when the laptop joined it ('' when none or not readable).
+function Get-SavedWifiPassword([string]$Ssid) {
+    if (-not $Ssid) { return '' }
+    $out = netsh wlan show profile name="$Ssid" key=clear 2>$null | Out-String
+    if ($out -match '(?m)^\s+Key Content\s+:\s(.*)$') { return $Matches[1].TrimEnd("`r") }
+    return ''
+}
+
+# Changes whenever this laptop joins or leaves a network (its IPv4 addresses change).
+function Get-NetworkSignature {
+    @([System.Net.NetworkInformation.NetworkInterface]::GetAllNetworkInterfaces() |
+        Where-Object { $_.OperationalStatus -eq 'Up' -and $_.NetworkInterfaceType -ne 'Loopback' } |
+        ForEach-Object { $_.GetIPProperties().UnicastAddresses } |
+        Where-Object { $_.Address.AddressFamily -eq 'InterNetwork' } |
+        ForEach-Object { $_.Address.IPAddressToString }) -join ','
 }
 
 # This laptop's IPv4 address on the network that has a gateway (the hotspot), Wi-Fi preferred.
@@ -95,6 +128,39 @@ function Get-TrackerPorts {
             }
         }
     } | Sort-Object @{ Expression = { -not $_.Likely } }, Port)
+}
+
+# Changes whenever a USB-serial device is plugged in or out (cheap enough to poll).
+function Get-PortNames { ([System.IO.Ports.SerialPort]::GetPortNames() | Sort-Object) -join ',' }
+
+# Opens a tracker port for reading. Pulling the USB cable while a port is open makes .NET's cleanup of
+# it throw on the finalizer thread, which ends the whole program; skipping that cleanup avoids it.
+function Open-TrackerPort([string]$Port) {
+    $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, 'None', 8, 'One'
+    $sp.Encoding = [Text.Encoding]::UTF8
+    $sp.ReadTimeout = 500
+    $sp.DtrEnable = $false  # no reset of the board
+    $sp.RtsEnable = $false
+    $sp.Open()
+    [GC]::SuppressFinalize($sp.BaseStream)
+    return $sp
+}
+
+# True when nothing else has the COM port open.
+function Test-PortFree([string]$Port) {
+    $sp = New-Object System.IO.Ports.SerialPort $Port
+    try { $sp.Open(); return $true } catch { return $false } finally { if ($sp.IsOpen) { $sp.Close() }; $sp.Dispose() }
+}
+
+# True while a setup window uses the tracker's port (it holds the port lock).
+function Test-PortClaimed {
+    $lock = New-Object System.Threading.Mutex($false, $PortLockName)
+    try {
+        $free = $false
+        try { $free = $lock.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $free = $true }
+        if ($free) { $lock.ReleaseMutex() }
+        return -not $free
+    } finally { $lock.Dispose() }
 }
 
 # Firearms whose Active/Overdue transaction has GPS tracking on: the ones that accept positions.
@@ -138,6 +204,71 @@ function Test-Backend([string]$Ip) {
     } catch { return $false }
 }
 
+# XAMPP's MySQL is a manual-start service on this laptop, so it is stopped after every restart, and the
+# backend can store no position without it. $true when it was stopped and has been started.
+function Start-MysqlIfStopped {
+    $svc = Get-Service mysql -ErrorAction SilentlyContinue
+    if (-not $svc -or $svc.Status -eq 'Running') { return $false }
+    try {
+        Start-Service mysql -ErrorAction Stop
+        $svc.WaitForStatus('Running', [TimeSpan]::FromSeconds(15))
+        return $true
+    } catch { return $false }
+}
+
+# Lines in the Wi-Fi log carry the tracker's device id.
+function Get-DeviceId {
+    $id = Get-ConfigDefine 'DEVICE_ID'
+    if ($id) { return $id }
+    return 'ESP32-001'
+}
+
+# The tracker's last report over Wi-Fi as @{ At; Text }, from the end of the backend's log, or $null.
+function Get-LastWifiReport([string]$DeviceId) {
+    if (-not (Test-Path $TrackerLog)) { return $null }
+    $fs = [IO.File]::Open($TrackerLog, 'Open', 'Read', 'ReadWrite')
+    try {
+        [void]$fs.Seek(-[Math]::Min($fs.Length, [long]8192), 'End')
+        $text = (New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8)).ReadToEnd()
+    } finally { $fs.Close() }
+    $last = $null
+    foreach ($line in ($text -split "`n")) {
+        if ($line -match '^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d)  (\S+)  (.*)$' -and $Matches[2] -eq $DeviceId) {
+            $last = [pscustomobject]@{ At = [datetime]$Matches[1]; Text = $Matches[3].TrimEnd() }
+        }
+    }
+    return $last
+}
+
+# A tracker that cannot join its Wi-Fi when it starts opens its own setup Wi-Fi (firmware SETUP_AP_NAME).
+function Get-SetupWifiName {
+    $name = Get-ConfigDefine 'SETUP_AP_NAME'
+    if ($name -and $name -notmatch 'DEVICE_ID') { return $name }
+    return "ArmoryTracker-$(Get-DeviceId)"
+}
+
+# New lines the backend noted for one tracker since the last call, as @{ Time; Text }. $State remembers
+# the read position; a fresh @{} starts at the end, so only what arrives from now on is shown.
+function Read-WifiLines([hashtable]$State, [string]$DeviceId) {
+    if (-not (Test-Path $TrackerLog)) { $State.Pos = [long]0; return }
+    $fs = [IO.File]::Open($TrackerLog, 'Open', 'Read', 'ReadWrite')
+    try {
+        if ($null -eq $State.Pos) { $State.Pos = $fs.Length }
+        if ($fs.Length -lt $State.Pos) { $State.Pos = [long]0 }  # the backend started a new file
+        if ($fs.Length -eq $State.Pos) { return }
+        [void]$fs.Seek($State.Pos, 'Begin')
+        $text = (New-Object IO.StreamReader($fs, [Text.Encoding]::UTF8)).ReadToEnd()
+        $end = $text.LastIndexOf("`n")
+        if ($end -lt 0) { return }  # a line still being written: next time
+        $State.Pos += [Text.Encoding]::UTF8.GetByteCount($text.Substring(0, $end + 1))
+        foreach ($line in ($text.Substring(0, $end) -split "`n")) {
+            if ($line -match '^\d{4}-\d\d-\d\d (\d\d:\d\d:\d\d)  (\S+)  (.*)$' -and $Matches[2] -eq $DeviceId) {
+                [pscustomobject]@{ Time = $Matches[1]; Text = $Matches[3].TrimEnd() }
+            }
+        }
+    } finally { $fs.Close() }
+}
+
 # ================================================================ config.h
 
 function ConvertTo-CString([string]$Value) {
@@ -151,7 +282,12 @@ function Set-Define([string]$Text, [string]$Key, [string]$Value) {
     return [regex]::Replace($Text, $pattern, [System.Text.RegularExpressions.MatchEvaluator] { param($m) $line })
 }
 
-function Write-TrackerConfig([string]$Ssid, [string]$Password, [string]$Ip, [int]$EquipmentId) {
+function Set-OrAddDefine([string]$Text, [string]$Key, [string]$Value) {
+    if ($Text -match "(?m)^#define\s+$Key\b") { return Set-Define $Text $Key $Value }
+    return $Text.TrimEnd() + "`r`n`r`n#define $Key $Value`r`n"
+}
+
+function Write-TrackerConfig([string]$Ssid, [string]$Password, [string]$Ip, [int]$EquipmentId, [string]$Build) {
     if (-not (Test-Path $ConfigH)) { Copy-Item $ExampleH $ConfigH }
     $text = [IO.File]::ReadAllText($ConfigH)
     $text = Set-Define $text 'WIFI_SSID' (ConvertTo-CString $Ssid)
@@ -166,63 +302,146 @@ function Write-TrackerConfig([string]$Ssid, [string]$Password, [string]$Ip, [int
     # Keep the signing secret identical to the backend's, or every position is rejected (401).
     $secret = Get-EnvValue 'IOT_HMAC_SECRET'
     if ($secret) { $text = Set-Define $text 'HMAC_SECRET' (ConvertTo-CString $secret) }
+    # The tracker reports its build; an update over Wi-Fi is done once it reports this one.
+    $text = Set-OrAddDefine $text 'FIRMWARE_BUILD' (ConvertTo-CString $Build)
     [IO.File]::WriteAllText($ConfigH, $text, (New-Object Text.UTF8Encoding $false))
+}
+
+# Leaves the firmware just built for the backend to offer to the tracker over Wi-Fi.
+function Publish-Firmware([string]$Build) {
+    $bin = Join-Path $BuildDir 'armory_tracker.ino.bin'
+    if (-not (Test-Path $bin)) { throw "the build left no $bin" }
+    New-Item -ItemType Directory -Force -Path $FirmwareDir | Out-Null
+    $device = Get-DeviceId
+    Copy-Item $bin (Join-Path $FirmwareDir "$device.bin") -Force
+    $meta = @{
+        build = $Build
+        md5   = (Get-FileHash $bin -Algorithm MD5).Hash.ToLower()
+        size  = (Get-Item $bin).Length
+    } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText((Join-Path $FirmwareDir "$device.json"), $meta, (New-Object Text.UTF8Encoding $false))
+}
+
+# Takes back a waiting update (it holds the Wi-Fi password and the secret).
+function Remove-PublishedFirmware {
+    $device = Get-DeviceId
+    Remove-Item (Join-Path $FirmwareDir "$device.bin"), (Join-Path $FirmwareDir "$device.json") -ErrorAction SilentlyContinue
 }
 
 # ================================================================ live status in the terminal
 
 function Get-LineColor([string]$Line) {
-    if ($Line -match 'failed|HTTP [45]\d\d|transport error|rejected|Guru|panic|abort|Backtrace|not found|NO DATA|GARBLED') { return 'Red' }
-    if ($Line -match 'HTTP 2\d\d|\[wifi\] connected|\[gps\] -?\d+\.\d+') { return 'Green' }
-    if ($Line -match 'no fix yet|fix lost|fix too weak|waiting for a GPS fix|reconnecting|link down') { return 'Yellow' }
-    if ($Line -match '\[setup\]|\*wm:') { return 'Cyan' }
+    if ($Line -match 'failed|HTTP [45]\d\d|transport error|rejected|Guru|panic|abort|Backtrace|not found|NO DATA|GARBLED|NOT reachable|CRASH|WATCHDOG|BROWNOUT|cannot update|cannot install|install failed|download failed') { return 'Red' }
+    if ($Line -match 'HTTP 2\d\d|\[wifi\] connected|\[gps\] -?\d+\.\d+|\[link\] laptop (reachable|found)') { return 'Green' }
+    if ($Line -match 'no fix yet|fix lost|fix too weak|waiting for a GPS fix|reconnecting|link down|laptop silent|setup mode') { return 'Yellow' }
+    if ($Line -match '\[setup\]|\*wm:|\[boot\]|\[ota\]') { return 'Cyan' }
     return 'Gray'
 }
 
-function Start-ConsoleMonitor([string]$Port) {
-    try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
-    $ports = Get-TrackerPorts
-    if (-not $Port -or -not ($ports | Where-Object Port -eq $Port)) { $Port = ($ports | Select-Object -First 1).Port }
-    if (-not $Port) {
-        Write-Host ''
-        Write-Host 'No ESP32 is plugged in by USB, so there is no live status to show.' -ForegroundColor Yellow
-        Write-Host 'The tracker still runs on any power source. To watch it: plug it in, then run  iot\setup-tracker.bat monitor'
-        return
-    }
+# Likely ESP32 ports only: a Bluetooth or modem COM port must not stand in for the tracker.
+function Get-UsbTracker([string]$Prefer) {
+    $ports = @(Get-TrackerPorts | Where-Object Likely)
+    if ($Prefer -and ($ports | Where-Object Port -eq $Prefer)) { return $Prefer }
+    return ($ports | Select-Object -First 1).Port
+}
 
-    $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, 'None', 8, 'One'
-    $sp.Encoding = [Text.Encoding]::UTF8
-    $sp.ReadTimeout = 500
-    $sp.DtrEnable = $false
-    $sp.RtsEnable = $false
+# Live status over USB until the tracker is unplugged ('unplugged') or its port is held by another
+# program ('busy').
+function Watch-Usb([string]$Port) {
+    if (Test-PortClaimed) {
+        Write-Host '  A setup window is using the tracker. Live status here resumes by itself.' -ForegroundColor DarkGray
+        while (Test-PortClaimed) { Start-Sleep -Milliseconds 500 }
+    }
     try {
-        $sp.Open()
+        $sp = Open-TrackerPort $Port
     } catch {
-        Write-Host "Could not open ${Port}: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host 'Close any other monitor that uses this port (arduino-cli monitor, Arduino IDE), then try again.'
-        return
+        Write-Host "  Could not open ${Port}: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host '  Another program uses it (arduino-cli monitor, Arduino IDE). Following the tracker over Wi-Fi meanwhile.' -ForegroundColor Yellow
+        return 'busy'
     }
-
-    Write-Host ''
-    Write-Host "  Live tracker status on $Port" -ForegroundColor Cyan
-    Write-Host '  green = connected / position sent    yellow = waiting for GPS    red = problem' -ForegroundColor DarkGray
-    Write-Host '  Press Ctrl+C to stop watching. The tracker keeps running.' -ForegroundColor DarkGray
-    Write-Host ''
+    Write-Host "  By USB on $Port" -ForegroundColor Cyan
     try {
         while ($true) {
+            if (Test-PortClaimed) {
+                # A setup window needs the port (upload or Watch live): step aside, then come back.
+                $sp.Close()
+                Write-Host '  Paused while the setup window uses the tracker. Resumes by itself.' -ForegroundColor DarkGray
+                while (Test-PortClaimed) { Start-Sleep -Milliseconds 500 }
+                $back = $false
+                for ($i = 0; $i -lt 40 -and -not $back; $i++) {
+                    try { $sp = Open-TrackerPort $Port; $back = $true } catch { Start-Sleep -Milliseconds 500 }
+                }
+                if (-not $back) {
+                    if (-not (Get-UsbTracker $Port)) { Write-Host '  The tracker was unplugged.' -ForegroundColor Yellow; return 'unplugged' }
+                    Write-Host "  Could not reopen ${Port}: another program is using it." -ForegroundColor Yellow
+                    return 'busy'
+                }
+                Write-Host '  Resumed.' -ForegroundColor DarkGray
+                continue
+            }
             try {
                 $line = $sp.ReadLine().TrimEnd()
             } catch [System.TimeoutException] {
                 continue
             } catch {
-                Write-Host "Tracker disconnected from $Port." -ForegroundColor Yellow
-                break
+                Write-Host "  The tracker was unplugged from $Port." -ForegroundColor Yellow
+                return 'unplugged'
             }
             if (-not $line.Trim()) { continue }
             Write-Host ("{0}  {1}" -f (Get-Date -Format 'HH:mm:ss'), $line) -ForegroundColor (Get-LineColor $line)
         }
     } finally {
-        if ($sp.IsOpen) { $sp.Close() }
+        try { if ($sp.IsOpen) { $sp.Close() } } catch { }  # an unplugged port can refuse to close
+    }
+}
+
+# Live status over Wi-Fi (what the backend notes) until a tracker can be watched by USB: one is plugged
+# in, or $BusyPort (held by another program) is free again.
+function Watch-Wifi([string]$BusyPort) {
+    $device = Get-DeviceId
+    $ssid = Get-ConfigDefine 'WIFI_SSID'
+    Write-Host "  Over Wi-Fi: $device reports every 10 s while it waits for a GPS fix, and each position it sends." -ForegroundColor Cyan
+    $state = @{}
+    $quietSince = Get-Date
+    $hinted = $false
+    $nextPortCheck = Get-Date
+    while ($true) {
+        foreach ($entry in @(Read-WifiLines $state $device)) {
+            Write-Host ("{0}  {1}" -f $entry.Time, $entry.Text) -ForegroundColor (Get-LineColor $entry.Text)
+            $quietSince = Get-Date
+            $hinted = $false
+        }
+        if (-not $hinted -and ((Get-Date) - $quietSince).TotalSeconds -gt 30) {
+            $hinted = $true
+            Write-Host "  Nothing over Wi-Fi for 30 s. Is the tracker powered and on '$ssid', and is the backend running?" -ForegroundColor Yellow
+        }
+        if ((Get-Date) -ge $nextPortCheck) {
+            $nextPortCheck = (Get-Date).AddSeconds(2)
+            $usb = Get-UsbTracker ''
+            if ($usb -and ($usb -ne $BusyPort -or (-not (Test-PortClaimed) -and (Test-PortFree $BusyPort)))) { return }
+        }
+        Start-Sleep -Milliseconds 700
+    }
+}
+
+function Start-ConsoleMonitor([string]$Port) {
+    try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { }
+    Write-Host ''
+    Write-Host '  Live tracker status' -ForegroundColor Cyan
+    Write-Host '  green = connected / position sent    yellow = waiting for GPS    red = problem' -ForegroundColor DarkGray
+    Write-Host '  Comes by USB while the tracker is plugged in, over Wi-Fi otherwise. Ctrl+C stops watching; the tracker keeps running.' -ForegroundColor DarkGray
+    if (Start-MysqlIfStopped) { Write-Host '  MySQL was stopped; started it (positions are stored there).' -ForegroundColor DarkGray }
+    Write-Host ''
+    $busyPort = ''
+    while ($true) {
+        $usb = $(if ($busyPort) { '' } else { Get-UsbTracker $Port })
+        if ($usb) {
+            if ((Watch-Usb $usb) -eq 'busy') { $busyPort = $usb }
+        } else {
+            Watch-Wifi $busyPort
+            $busyPort = ''
+        }
+        $Port = ''
     }
 }
 
@@ -241,6 +460,9 @@ switch ($Action.ToLower()) {
         "networks    : " + (((Get-VisibleNetworks).GetEnumerator() | ForEach-Object {
             $_.Key + $(if ($_.Value) { '' } else { ' (5 GHz only)' }) }) -join ', ')
         "config.h    : " + $(if (Test-Path $ConfigH) { "present, EQUIPMENT_ID=$(Get-ConfigDefine 'EQUIPMENT_ID')" } else { 'missing (created from config.example.h on save)' })
+        "mysql       : " + $(if ($svc = Get-Service mysql -ErrorAction SilentlyContinue) { $svc.Status } else { 'no "mysql" service' })
+        $last = $(if (Test-Path $TrackerLog) { Select-String -Path $TrackerLog -Pattern "^\S+ \S+  $([regex]::Escape((Get-DeviceId)))  " | Select-Object -Last 1 })
+        "over Wi-Fi  : " + $(if ($last) { $last.Line } else { "nothing from $(Get-DeviceId) yet" })
         return
     }
     'monitor' {
@@ -473,6 +695,7 @@ $tbPass = New-Object System.Windows.Forms.TextBox; Set-InputStyle $tbPass; $tbPa
 $chkShow = New-Object System.Windows.Forms.CheckBox
 $chkShow.Text = 'Show'; $chkShow.Font = $FontField; $chkShow.ForeColor = Col $C.Muted; $chkShow.AutoSize = $true; $chkShow.Margin = Pad 10 3 0 0
 Add-Row $card1 $tbPass $chkShow
+$hintPass = New-Hint; Add-Row $card1 $hintPass
 Add-Row $left $card1
 
 # ---- left: 2 This laptop
@@ -530,7 +753,7 @@ Add-Row $activity $actHead
 
 # Steps
 $script:steps = @()
-foreach ($stepText in @('Write the settings', 'Build and upload the firmware', 'Check the Wi-Fi connection')) {
+foreach ($stepText in @('Write the settings', 'Build and upload the firmware', 'Check the Wi-Fi connection', 'Check the GPS module', 'Check the link to this laptop')) {
     $row = New-Stack 2
     $row.Margin = Pad 0 3 0 3
     [void]$row.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('AutoSize')))
@@ -553,7 +776,7 @@ function Set-Step([int]$Index, [string]$State) {
         'failed'  { $icon.Text = $G.Cross;  $icon.ForeColor = Col $C.Err;         $text.ForeColor = Col $C.Err }
     }
 }
-function Reset-Steps { 0..2 | ForEach-Object { Set-Step $_ 'pending' } }
+function Reset-Steps { 0..($script:steps.Count - 1) | ForEach-Object { Set-Step $_ 'pending' } }
 
 # Progress: stage text + thin bar
 $stageText = New-Label 'Ready. Fill in the left side, then press Save to tracker.' $FontField $C.Muted
@@ -746,7 +969,10 @@ function Update-LaptopHints {
     } else {
         Set-Hint $hintLaptop 'ok' "On '$($laptop.Ssid)' ($($laptop.Band))."
     }
-    if (Test-Backend $tbIp.Text.Trim()) {
+    $ip = $tbIp.Text.Trim()
+    if (-not $ip) {
+        Set-Hint $hintBackend '' ''  # nothing to check until the address is known
+    } elseif (Test-Backend $ip) {
         Set-Hint $hintBackend 'ok' 'Backend is running and reachable at this address.'
     } else {
         Set-Hint $hintBackend 'warn' 'Backend not reachable. Start it with: php artisan serve --host 0.0.0.0 --port 8000'
@@ -763,32 +989,95 @@ function Update-Networks {
     else {
         $laptopWifi = (Get-LaptopWifi).Ssid
         $cbSsid.Text = $(if ($laptopWifi) { $laptopWifi } else { Get-ConfigDefine 'WIFI_SSID' })
+        $script:autoSsid = $cbSsid.Text
     }
     Clear-ComboHighlight $cbSsid
     Update-SsidHint
 }
 
+# The password this laptop saved for the chosen Wi-Fi is filled in, unless one was typed by hand.
+$script:passTyped = $false
+$script:fillingPass = $false
+function Update-Password {
+    $ssid = $cbSsid.Text.Trim()
+    if ($script:passTyped -and $tbPass.Text) { return }
+    $saved = Get-SavedWifiPassword $ssid
+    $script:fillingPass = $true
+    $tbPass.Text = $saved
+    $script:fillingPass = $false
+    $script:passTyped = $false
+    if ($saved) { Set-Hint $hintPass 'ok' "Filled in from this laptop's saved Wi-Fi '$ssid'." }
+    elseif ($ssid) { Set-Hint $hintPass 'info' "Type the password of '$ssid' (this laptop has none saved for it)." }
+    else { Set-Hint $hintPass '' '' }
+    Update-Wrap
+}
+$tbPass.Add_TextChanged({
+    if ($script:fillingPass) { return }
+    $script:passTyped = $true
+    if ($hintPass.Visible) { Set-Hint $hintPass '' ''; Update-Wrap }
+})
+
 function Update-Ip {
-    $tbIp.Text = Get-LaptopIp
+    $script:autoIp = Get-LaptopIp
+    $tbIp.Text = $script:autoIp
     Update-LaptopHints
 }
 
 function Update-Ports {
+    $keep = ($cbPort.Text -split '\s')[0]
     $cbPort.Items.Clear()
     $ports = @(Get-TrackerPorts)  # @() so one port still has .Count (Windows PowerShell 5.1)
     foreach ($p in $ports) { [void]$cbPort.Items.Add("$($p.Port)   $($p.Label)") }
+    $script:portNames = Get-PortNames
     if ($ports.Count -gt 0) {
-        $cbPort.SelectedIndex = 0
-        Set-Hint $hintPort 'ok' 'Tracker found.'
+        # Keep the chosen port while it is still plugged in.
+        $cbPort.SelectedIndex = [Math]::Max(0, [array]::IndexOf(@($ports | ForEach-Object { $_.Port }), $keep))
+        Set-Hint $hintPort 'ok' "Tracker found on $(($cbPort.Text -split '\s')[0])."
     } else {
         $cbPort.Text = ''
-        Set-Hint $hintPort 'err' 'No tracker found. Plug the ESP32 in with a USB data cable, then press Refresh.'
+        $script:nextSetupWifiCheck = [datetime]::MinValue
+        Update-TrackerHint
     }
     Clear-ComboHighlight $cbPort
     Update-Wrap
 }
 
+# Without a USB cable the tracker can still be found: on the hotspot it reports to the backend over Wi-Fi,
+# and when it could not join the hotspot its own setup Wi-Fi is on. Shown under the USB port.
+$script:nextSetupWifiCheck = [datetime]::MinValue
+$script:setupWifiOn = $false
+function Update-TrackerHint {
+    if (($cbPort.Text -split '\s')[0] -match '^COM\d+$') { return }  # on USB: "Tracker found on COMx" stays
+    $ssid = Get-ConfigDefine 'WIFI_SSID'
+    $report = Get-LastWifiReport (Get-DeviceId)
+    $age = $(if ($report) { [int]((Get-Date) - $report.At).TotalSeconds } else { [int]::MaxValue })
+    if ($age -gt 30 -and (Get-Date) -ge $script:nextSetupWifiCheck) {
+        # netsh takes a moment, so look for the setup Wi-Fi only every 10 s while the tracker is silent.
+        $script:nextSetupWifiCheck = (Get-Date).AddSeconds(10)
+        $script:setupWifiOn = (Get-VisibleNetworks).Contains((Get-SetupWifiName))
+    }
+    if ($age -le 30) {
+        $what = $(switch -Regex ($report.Text) {
+            'satellites in view=(\d+), used=(\d+)' { "waiting for a GPS fix, $($Matches[1]) satellites in view"; break }
+            '\[post\] HTTP 2\d\d' { 'sending positions'; break }
+            '\[post\] HTTP (\d{3})' { "its last position got HTTP $($Matches[1])"; break }
+            '\[gps\] fix' { 'GPS fix still weak'; break }
+            '\[gps\] NO DATA' { 'no data from its GPS module'; break }
+            default { 'just started' }
+        })
+        Set-Hint $hintPort 'ok' "Tracker on the hotspot: reported $age s ago over Wi-Fi ($what). Save sends new settings to it over Wi-Fi."
+    } elseif ($script:setupWifiOn) {
+        Set-Hint $hintPort 'warn' "The tracker is in phone setup mode (its Wi-Fi '$(Get-SetupWifiName)' is on): it could not join '$ssid', or its BOOT button was held 3 s. It goes back to '$ssid' by itself within 3 minutes."
+    } elseif ($report -and $age -le 86400) {
+        Set-Hint $hintPort 'warn' ("Tracker not on USB, and silent over Wi-Fi since {0:HH:mm:ss}. Is it powered, and in range of '{1}'?" -f $report.At, $ssid)
+    } else {
+        Set-Hint $hintPort 'err' 'No tracker found. Plug the ESP32 in with a USB data cable; it is picked up by itself.'
+    }
+    Update-Wrap
+}
+
 function Update-Firearms {
+    $startedMysql = Start-MysqlIfStopped
     $cbFirearm.Items.Clear()
     $list = @(Get-TrackableFirearms)
     foreach ($f in $list) { [void]$cbFirearm.Items.Add($f) }
@@ -799,6 +1088,8 @@ function Update-Firearms {
     else { $cbFirearm.Text = $current }
     if ($list.Count -eq 0) {
         Set-Hint $hintFirearm 'warn' 'No firearm with GPS tracking on was found (is MySQL running?). The number above is used as typed.'
+    } elseif ($startedMysql) {
+        Set-Hint $hintFirearm 'info' 'MySQL was stopped, so it was started (positions are stored there).'
     } else {
         Set-Hint $hintFirearm '' ''
     }
@@ -807,12 +1098,59 @@ function Update-Firearms {
 }
 
 $chkShow.Add_CheckedChanged({ $tbPass.UseSystemPasswordChar = -not $chkShow.Checked })
-$btnScan.Add_Click({ if (-not $script:busy) { Update-Networks; Update-LaptopHints } })
+$btnScan.Add_Click({ if (-not $script:busy) { Update-Networks; Update-Password; Update-LaptopHints } })
 $btnIp.Add_Click({ if (-not $script:busy) { Update-Ip } })
 $btnPorts.Add_Click({ if (-not $script:busy) { Update-Ports } })
-$cbSsid.Add_Leave({ Update-SsidHint; Update-LaptopHints })
-$cbSsid.Add_SelectedIndexChanged({ Update-SsidHint; Update-LaptopHints })
+$cbSsid.Add_Leave({ Update-SsidHint; Update-Password; Update-LaptopHints })
+$cbSsid.Add_SelectedIndexChanged({ Update-SsidHint; Update-Password; Update-LaptopHints })
 foreach ($combo in @($cbFirearm, $cbPort)) { $combo.Add_SelectedIndexChanged({ param($src) Clear-ComboHighlight $src }) }
+
+# Plugging the tracker in or out, or this laptop joining another Wi-Fi, updates the fields by itself.
+# A Wi-Fi name or IP address typed by hand is kept.
+$script:portNames = ''
+$script:netSignature = ''
+$script:autoIp = ''
+$script:autoSsid = ''
+$watchTimer = New-Object System.Windows.Forms.Timer
+$watchTimer.Interval = 1500
+$watchTimer.Add_Tick({
+    if ($script:busy) { return }
+    $hadUsb = ($cbPort.Text -split '\s')[0] -match '^COM\d+$'
+    if ((Get-PortNames) -ne $script:portNames) {
+        Update-Ports
+        $hasUsb = ($cbPort.Text -split '\s')[0] -match '^COM\d+$'
+        if ($script:liveSource -eq 'usb' -and $script:live -and
+            -not ([System.IO.Ports.SerialPort]::GetPortNames() -contains $script:live.PortName)) {
+            # Unplugged (to run on a power bank, say), and reading the port did not notice: carry on over Wi-Fi.
+            Stop-Live
+            Write-Log 'The tracker was unplugged from USB.' $C.Warn
+            Start-WifiLive
+        } elseif ($script:liveSource -eq 'wifi' -and $hasUsb) {
+            # Watching over Wi-Fi and the tracker is plugged in: switch to USB, which shows everything.
+            Stop-Live
+            Write-Log 'The tracker is plugged in by USB.' $C.Info
+            Start-Live -Quiet
+        } elseif (-not $script:liveSource -and $hadUsb -and -not $hasUsb) {
+            Write-Log 'The tracker was unplugged from USB.' $C.Warn
+            Start-WifiLive
+        }
+    } elseif (-not $hadUsb) {
+        Update-TrackerHint  # how it is doing over Wi-Fi changes all the time
+    }
+    $signature = Get-NetworkSignature
+    if ($signature -eq $script:netSignature) { return }
+    $script:netSignature = $signature
+    $laptopSsid = (Get-LaptopWifi).Ssid
+    if ($laptopSsid -and $laptopSsid -ne $script:autoSsid -and $cbSsid.Text.Trim() -eq $script:autoSsid) {
+        $script:autoSsid = $laptopSsid
+        $cbSsid.Text = $laptopSsid
+        Clear-ComboHighlight $cbSsid
+        Update-Password
+    }
+    # What is in range changed too (a hotspot switched on): read the list again before judging the name.
+    Update-Networks
+    if ($tbIp.Text.Trim() -eq $script:autoIp) { Update-Ip } else { Update-LaptopHints }
+})
 
 # ================================================================ window: flash and verify
 
@@ -823,6 +1161,8 @@ $script:verifyUntil = [datetime]::MinValue
 $script:serialBuffer = ''
 $script:busy = $false
 $script:run = @{}
+$script:noPassOk = ''
+$script:wifiMoveOk = ''
 
 function Read-NewText([string]$Path) {
     if (-not (Test-Path $Path)) { return '' }
@@ -849,6 +1189,34 @@ function Set-Busy([bool]$Busy) {
 foreach ($combo in @($cbSsid, $cbFirearm)) { $combo.Add_KeyPress({ param($src, $e) if ($script:busy) { $e.Handled = $true } }) }
 foreach ($combo in @($cbSsid, $cbFirearm, $cbPort)) { $combo.Add_DropDown({ param($src) if ($script:busy) { $src.DroppedDown = $false } }) }
 
+# The window holds this lock while it uses the tracker's port: from Save until the check ends, and while
+# watching live. Live-status terminals of this tool close the port while it is held (Start-ConsoleMonitor),
+# so a terminal left open never blocks a flash or Watch live.
+$script:portLock = New-Object System.Threading.Mutex($false, $PortLockName)
+$script:holdingLock = $false
+function Enter-PortLock {
+    if ($script:holdingLock) { return $true }
+    # Terminals only peek at the lock for an instant; another window would hold it for minutes.
+    try { $script:holdingLock = $script:portLock.WaitOne(1500) } catch [System.Threading.AbandonedMutexException] { $script:holdingLock = $true }
+    return $script:holdingLock
+}
+function Exit-PortLock {
+    if (-not $script:holdingLock) { return }
+    try { $script:portLock.ReleaseMutex() } catch { }
+    $script:holdingLock = $false
+}
+
+# Terminals watching the port let go of it within a second once the lock is held.
+function Wait-PortFree([string]$Port) {
+    $until = (Get-Date).AddSeconds(5)
+    while (-not (Test-PortFree $Port)) {
+        if ((Get-Date) -gt $until) { return $false }
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 200
+    }
+    return $true
+}
+
 function Complete-Run([string]$Kind, [string]$Text, [int]$FailedStep = -1) {
     if ($FailedStep -ge 0) { Set-Step $FailedStep 'failed' }
     $done = $Kind -eq 'ok'
@@ -856,25 +1224,38 @@ function Complete-Run([string]$Kind, [string]$Text, [int]$FailedStep = -1) {
     Show-Banner $Kind $Text
     $script:run.Saved = $true
     Set-Busy $false
-    # Watching live before Save? Pick it up again, unless the run failed.
-    if ($script:resumeLive -and $Kind -ne 'err') { Start-Live -Quiet }
+    $script:afterRun = $true
+    # Once the tracker is on the Wi-Fi, keep showing its status (the port lock carries over): by USB, and
+    # over Wi-Fi after it is unplugged. Also when watching live before Save, unless the run failed.
+    if ($Kind -ne 'err' -and ($script:resumeLive -or $script:run.Joined)) { Start-Live -Quiet }
+    elseif ($script:run.Wifi -and $script:resumeLive) { Start-WifiLive }
+    else { Exit-PortLock }
     $script:resumeLive = $false
+    $script:afterRun = $false
 }
 
 # ================================================================ window: optional live status
 
-$script:live = $null
+$script:live = $null          # the open USB port while watching by USB
+$script:liveSource = ''       # '' (not watching), 'usb' or 'wifi'
 $script:liveBuffer = ''
 $script:resumeLive = $false
+$script:startingLive = $false
+$script:wifiState = @{}
+$script:wifiQuietSince = Get-Date
+$script:wifiHinted = $false
 
 $liveTimer = New-Object System.Windows.Forms.Timer
 $liveTimer.Interval = 250
 $liveTimer.Add_Tick({
+    if ($script:liveSource -eq 'wifi') { Read-WifiLive; return }
     try {
         $script:liveBuffer += $script:live.ReadExisting()
     } catch {
+        # Unplugged (to run on a power bank, say): carry on over Wi-Fi.
         Stop-Live
-        Write-Log 'Live status stopped: the tracker was unplugged.' $C.Warn
+        Write-Log 'The tracker was unplugged from USB.' $C.Warn
+        Start-WifiLive
         return
     }
     while ($script:liveBuffer -match "^(.*?)\r?\n") {
@@ -885,45 +1266,87 @@ $liveTimer.Add_Tick({
     }
 })
 
-function Start-Live([switch]$Quiet) {
-    $port = ($cbPort.Text -split '\s')[0]
-    if ($port -notmatch '^COM\d+$') {
-        if (-not $Quiet) { Show-Banner 'err' 'No tracker port. Plug the ESP32 in by USB and press Refresh.' }
-        return
-    }
-    try {
-        $sp = New-Object System.IO.Ports.SerialPort $port, 115200, 'None', 8, 'One'
-        $sp.Encoding = [Text.Encoding]::UTF8
-        $sp.DtrEnable = $false
-        $sp.RtsEnable = $false
-        $sp.Open()
-    } catch {
-        Show-Banner 'err' "Could not open ${port} for live status: $($_.Exception.Message) Close any other monitor that uses it."
-        return
-    }
-    $script:live = $sp
-    $script:liveBuffer = ''
-    $outHead.Text = "TRACKER OUTPUT   $($G.Dot) LIVE"
+# Without a USB cable the tracker is followed over Wi-Fi: it reports to the backend, which notes each
+# report in backend\storage\logs\trackers.log.
+function Start-WifiLive {
+    Exit-PortLock
+    $script:liveSource = 'wifi'
+    $script:wifiState = @{}
+    [void](Read-WifiLines $script:wifiState (Get-DeviceId))  # from now on
+    $script:wifiQuietSince = Get-Date
+    $script:wifiHinted = $false
+    $outHead.Text = "TRACKER OUTPUT   $($G.Dot) LIVE OVER WI-FI"
     $outHead.ForeColor = Col $C.Ok
     $btnLive.Text = 'Stop watching'
-    Write-Log "Watching the tracker live on $port$($G.Ellipsis)" $C.Info
+    Write-Log "Watching $(Get-DeviceId) over Wi-Fi (no USB cable). It reports every 10 s while it waits for a GPS fix, and each position it sends." $C.Info
+    $last = Get-LastWifiReport (Get-DeviceId)
+    # Just after a Save the check already showed it.
+    if ($last -and -not $script:afterRun -and ((Get-Date) - $last.At).TotalSeconds -le 60) { Write-Log ("{0:HH:mm:ss}  {1}" -f $last.At, $last.Text) (Get-LogColor $last.Text) }
     $script:followLog = $true
     Move-LogToEnd
     $liveTimer.Start()
 }
 
-function Stop-Live {
+function Read-WifiLive {
+    $got = $false
+    foreach ($entry in @(Read-WifiLines $script:wifiState (Get-DeviceId))) {
+        Write-Log ("{0}  {1}" -f $entry.Time, $entry.Text) (Get-LogColor $entry.Text)
+        $got = $true
+    }
+    if ($got) {
+        $script:wifiQuietSince = Get-Date
+        $script:wifiHinted = $false
+    } elseif (-not $script:wifiHinted -and ((Get-Date) - $script:wifiQuietSince).TotalSeconds -gt 30) {
+        $script:wifiHinted = $true
+        Write-Log ("Nothing over Wi-Fi for 30 s. Is the tracker powered and on '{0}', and is the backend running?" -f (Get-ConfigDefine 'WIFI_SSID')) $C.Warn
+    }
+}
+
+function Start-Live([switch]$Quiet) {
+    $port = ($cbPort.Text -split '\s')[0]
+    if ($port -notmatch '^COM\d+$') { Start-WifiLive; return }
+    # Live-status terminals of this tool let go of the port while this window watches it.
+    $script:startingLive = $true
+    $problem = $null
+    if (-not (Enter-PortLock)) {
+        $problem = 'Another setup window is using the tracker. Close it, then press Watch live again.'
+    } elseif (-not (Wait-PortFree $port)) {
+        $problem = "$port is in use by another program (Arduino IDE Serial Monitor, arduino-cli monitor, PuTTY$($G.Ellipsis)). Close it, then press Watch live again."
+    } else {
+        try {
+            $sp = Open-TrackerPort $port
+        } catch {
+            $problem = "Could not open ${port} for live status: $($_.Exception.Message) Close any other monitor that uses it."
+        }
+    }
+    $script:startingLive = $false
+    if ($problem) { Exit-PortLock; Show-Banner 'err' "$problem Watching over Wi-Fi meanwhile."; Start-WifiLive; return }
+    $script:live = $sp
+    $script:liveSource = 'usb'
+    $script:liveBuffer = ''
+    $outHead.Text = "TRACKER OUTPUT   $($G.Dot) LIVE BY USB"
+    $outHead.ForeColor = Col $C.Ok
+    $btnLive.Text = 'Stop watching'
+    Write-Log "Watching the tracker live on $port. Unplug it and this carries on over Wi-Fi." $C.Info
+    $script:followLog = $true
+    Move-LogToEnd
+    $liveTimer.Start()
+}
+
+function Stop-Live([switch]$KeepLock) {
     $liveTimer.Stop()
     try { if ($script:live -and $script:live.IsOpen) { $script:live.Close() } } catch { }
     $script:live = $null
+    $script:liveSource = ''
+    if (-not $KeepLock) { Exit-PortLock }
     $outHead.Text = 'TRACKER OUTPUT'
     $outHead.ForeColor = Col $C.Dim
     $btnLive.Text = 'Watch live'
 }
 
 $btnLive.Add_Click({
-    if ($script:busy) { return }
-    if ($script:live) { Stop-Live; Write-Log 'Stopped watching.' $C.Dim }
+    if ($script:busy -or $script:startingLive) { return }
+    if ($script:liveSource) { Stop-Live; Write-Log 'Stopped watching.' $C.Dim }
     else { Start-Live }
 })
 
@@ -946,7 +1369,9 @@ $flashTimer.Add_Tick({
                 continue
             }
             if ($f -eq $ErrLog -or $line -match $KeepLine) { Write-Log $line }
-            if ($line -match '^Sketch uses') { Set-Stage "Firmware built. Connecting to the tracker$($G.Ellipsis)" }
+            if ($line -match '^Sketch uses') {
+                Set-Stage $(if ($script:run.Wifi) { "Firmware built. Handing it to the backend$($G.Ellipsis)" } else { "Firmware built. Connecting to the tracker$($G.Ellipsis)" })
+            }
             elseif ($line -match '^Connecting') { Set-Stage "Connecting to the tracker (if this stalls, hold its BOOT button)$($G.Ellipsis)" }
             elseif ($line -match 'Erasing|Chip erase') { Set-Stage "Erasing the old settings$($G.Ellipsis)" }
             elseif ($line -match 'Hash of data verified') { Set-Stage 'Upload verified.' 100 }
@@ -954,51 +1379,184 @@ $flashTimer.Add_Tick({
     }
     if ($script:proc -and $script:proc.HasExited) {
         $flashTimer.Stop()
-        if ($script:proc.ExitCode -eq 0) {
+        if ($script:proc.ExitCode -eq 0 -and $script:run.Wifi) {
+            try { Publish-Firmware $script:run.Build } catch {
+                Complete-Run 'err' "The firmware was built, but could not be handed to the backend: $($_.Exception.Message)" 1
+                return
+            }
+            Write-Log "The new firmware waits on this laptop. The tracker takes it with its next report (every 5-10 s while it is on the hotspot)." $C.Info
+            Set-Stage "Waiting for the tracker to report and take the new firmware$($G.Ellipsis)"
+            Start-WifiVerify
+        } elseif ($script:proc.ExitCode -eq 0) {
             Set-Step 1 'done'
             Set-Step 2 'running'
             Set-Stage "Restarting the tracker and waiting for its Wi-Fi$($G.Ellipsis)"
             Start-Verify
+        } elseif ($script:run.Wifi) {
+            Complete-Run 'err' 'The firmware build failed (see the output).' 1
         } else {
             Complete-Run 'err' 'Upload failed. Check the USB cable and the port, then try again.' 1
         }
     }
 })
 
+# What one tracker line says once its Wi-Fi is in: @(topic, kind, text), or $null to keep reading.
+# Topic 'gps' is the GPS module (step 4), 'link' is reaching this laptop (step 5); a [post] line (it has
+# a fix and sent a position) answers both.
+function Get-TrackerVerdict([string]$Line) {
+    $serve = "is the backend running (php artisan serve --host 0.0.0.0 --port $ApiPort) and this laptop on the hotspot?"
+    if ($Line -match '\[gps\] NO DATA') { return @('gps', 'warn', 'no data comes from its GPS module: check GPS TX to D18, GND and power (header pins soldered)') }
+    if ($Line -match '\[gps\] GARBLED') { return @('gps', 'warn', 'its GPS data is unreadable (wrong speed): find the speed with iot\firmware\gps_baud_finder') }
+    if ($Line -match '\[gps\] no fix yet \(satellites in view=(\d+)') {
+        $sky = $(if ([int]$Matches[1] -eq 0) { 'sees no satellites yet (normal indoors)' } else { "sees $($Matches[1]) satellites" })
+        return @('gps', 'ok', "its GPS module is working and $sky; positions start once it has a fix under open sky")
+    }
+    if ($Line -match '\[gps\] fix (lost|too weak|has no valid)') { return @('gps', 'ok', 'its GPS module is working; the fix is still weak, so keep it under open sky') }
+    if ($Line -match '\[link\] laptop reachable') { return @('link', 'ok', 'it reaches this laptop over Wi-Fi, so its status keeps showing here after you unplug it') }
+    if ($Line -match '\[link\] laptop NOT reachable') { return @('link', 'warn', "it cannot reach this laptop: $serve") }
+    if ($Line -match '\[link\] laptop answered HTTP 401') { return @('link', 'err', 'this laptop rejects its signature (the secret differs from backend\.env): press Save again') }
+    if ($Line -match '\[link\] laptop answered HTTP 404') { return @('link', 'warn', 'the backend on this laptop is older than the firmware: update it (git pull), then press Save again') }
+    if ($Line -match '\[link\] laptop answered HTTP (\d{3})') { return @('link', 'warn', "this laptop answered HTTP $($Matches[1]) (is MySQL running?)") }
+    if ($Line -match '\[post\] HTTP 2\d\d') { return @('post', 'ok', 'the server on this laptop accepted its position') }
+    if ($Line -match '\[post\] HTTP 401') { return @('post', 'err', 'the server rejected its position: the signing secret differs from backend\.env; press Save again') }
+    if ($Line -match '\[post\] HTTP 409') { return @('post', 'warn', 'the server rejected its position: this firearm has no Active/Overdue transaction with GPS tracking on') }
+    if ($Line -match '\[post\] HTTP 422') { return @('post', 'warn', 'the server rejected its position as invalid or too old') }
+    if ($Line -match '\[post\] HTTP (?!429)(\d{3})') { return @('post', 'warn', "the server answered HTTP $($Matches[1]) to its position") }
+    if ($Line -match '\[post\] transport error') { return @('post', 'warn', "it cannot reach this laptop: $serve") }
+    return $null
+}
+
+function Get-StepState([object[]]$Verdict) {
+    if (-not $Verdict) { return 'pending' }
+    if ($Verdict[0] -eq 'ok') { return 'done' }
+    return 'failed'
+}
+
+# The result of the check after flashing, from what the tracker said (Wi-Fi, GPS module, link to this laptop).
+function Complete-Verify {
+    $run = $script:run
+    if (-not $run.Joined) {
+        if ($run.WifiFailed) { Complete-Run 'err' "Saved, but the tracker could not join the Wi-Fi: $($run.WifiFailed)" 2 }
+        else { Complete-Run 'warn' 'Saved and flashed, but the tracker did not report its Wi-Fi within 45 seconds.' 2 }
+        return
+    }
+    $gps = $(if ($run.Gps) { $run.Gps } else { @('warn', 'its GPS module has not reported yet') })
+    $link = $(if ($run.Link) { $run.Link } else { @('warn', "it has not reported to this laptop yet: is the backend running (php artisan serve --host 0.0.0.0 --port $ApiPort)?") })
+    Set-Step 3 (Get-StepState $run.Gps)
+    Set-Step 4 (Get-StepState $run.Link)
+    $kinds = @($gps[0], $link[0])
+    $kind = $(if ($kinds -contains 'err') { 'err' } elseif ($kinds -contains 'warn') { 'warn' } else { 'ok' })
+    $sentences = @($gps[1], $link[1]) | ForEach-Object { $_.Substring(0, 1).ToUpper() + $_.Substring(1) + '.' }
+    Complete-Run $kind ("$($run.Joined). " + ($sentences -join ' '))
+}
+
+# Saved over Wi-Fi: follow the tracker through the backend's log as it takes the new firmware, restarts
+# into it and reports again.
+function Start-WifiVerify {
+    $script:run.Staged = $true
+    $script:run.WifiState = @{}
+    [void](Read-WifiLines $script:run.WifiState (Get-DeviceId))  # from now on
+    $script:verifyUntil = (Get-Date).AddMinutes(4)
+    $verifyTimer.Start()
+}
+
+function Step-WifiVerify {
+    $finished = $false
+    foreach ($entry in @(Read-WifiLines $script:run.WifiState (Get-DeviceId))) {
+        if ($finished) { break }
+        $line = $entry.Text
+        Write-Log ("{0}  {1}" -f $entry.Time, $line) (Get-LogColor $line)
+        if ($line -match 'cannot update over Wi-Fi') {
+            $script:run.OldFirmware = $true
+            $finished = $true
+        } elseif (-not $script:run.Joined) {
+            if ($line -match '\[ota\] new firmware offered') { Set-Stage "The tracker got the new firmware. Waiting for it to download it$($G.Ellipsis)" }
+            elseif ($line -match '\[ota\] the tracker is downloading') { Set-Stage "The tracker is downloading and installing the new firmware$($G.Ellipsis)" }
+            elseif ($line -match '\[ota\] (download failed|cannot install|install failed)') { Set-Stage "The tracker could not install it yet; it tries again in a minute$($G.Ellipsis)" }
+            elseif ($line -match "\[boot\] started \(build $([regex]::Escape($script:run.Build))\)|\[ota\] the tracker runs the new firmware") {
+                $script:run.Joined = "Saved over Wi-Fi. The tracker installed the new firmware and is back on '$($script:run.Ssid)'"
+                $script:run.Link = @('ok', 'it reaches this laptop over Wi-Fi')
+                Set-Step 1 'done'
+                Set-Step 2 'done'
+                Set-Step 3 'running'
+                Set-Step 4 'done'
+                Set-Stage "New firmware running. Checking the GPS module$($G.Ellipsis)"
+                $script:verifyUntil = (Get-Date).AddSeconds(30)
+            }
+        } else {
+            $verdict = Get-TrackerVerdict $line
+            if ($verdict -and $verdict[0] -eq 'post') {
+                $script:run.Gps = @('ok', 'it has a GPS fix')
+                $script:run.Link = @($verdict[1], $verdict[2])
+                $finished = $true
+            } elseif ($verdict -and $verdict[0] -eq 'gps') {
+                $script:run.Gps = @($verdict[1], $verdict[2])
+                $finished = $true
+            }
+        }
+    }
+    if (-not $finished -and (Get-Date) -le $script:verifyUntil) { return }
+    $verifyTimer.Stop()
+    if ($script:run.OldFirmware) {
+        Remove-PublishedFirmware
+        Complete-Run 'err' 'The tracker still has firmware from before updates over Wi-Fi, so it cannot take this one. Plug it in by USB once and press Save; from then on Save also works over the hotspot.' 1
+    } elseif (-not $script:run.Joined) {
+        Complete-Run 'warn' 'The new firmware waits on this laptop: the tracker takes it the next time it reports over Wi-Fi (it is silent now; check its power). Keep the backend running.' 2
+    } else {
+        Complete-Verify
+    }
+}
+
 $verifyTimer = New-Object System.Windows.Forms.Timer
 $verifyTimer.Interval = 250
 $verifyTimer.Add_Tick({
-    $result = $null
+    if ($script:run.Wifi) { Step-WifiVerify; return }
+    $finished = $false
     try { $script:serialBuffer += $script:serial.ReadExisting() } catch { }
-    while ($script:serialBuffer -match "^(.*?)\r?\n") {
+    while (-not $finished -and $script:serialBuffer -match "^(.*?)\r?\n") {
         $line = $Matches[1]
         $script:serialBuffer = $script:serialBuffer.Substring($Matches[0].Length)
         if (-not $line.Trim() -or $line -match '^\s*\.+\s*$') { continue }
         Write-Log "tracker> $line"
-        if ($line -match '\[wifi\] connected\s+ip=(\S+)') {
-            $result = @('ok', ("Saved. The tracker joined '{0}' (address {1}). It starts sending once it has a GPS fix under open sky." -f $script:run.Ssid, $Matches[1]))
+        if ($script:run.Joined) {
+            $verdict = Get-TrackerVerdict $line
+            if (-not $verdict) { continue }
+            if ($verdict[0] -eq 'post') {
+                if (-not $script:run.Gps) { $script:run.Gps = @('ok', 'it has a GPS fix') }
+                $script:run.Link = @($verdict[1], $verdict[2])
+            } elseif ($verdict[0] -eq 'gps') {
+                if (-not $script:run.Gps) { $script:run.Gps = @($verdict[1], $verdict[2]) }
+            } else {
+                $script:run.Link = @($verdict[1], $verdict[2])
+            }
+            Set-Step 3 (Get-StepState $script:run.Gps)
+            if (-not $script:run.Link) {
+                Set-Step 4 'running'
+                Set-Stage "GPS module checked. Checking the link to this laptop$($G.Ellipsis)"
+            }
+            $finished = $script:run.Gps -and $script:run.Link
+        } elseif ($line -match '\[wifi\] connected\s+ip=(\S+)') {
+            # Wi-Fi is in. The GPS and the first report to this laptop follow within one send interval (5 s).
+            $script:run.Joined = "Saved. The tracker joined '{0}' (address {1})" -f $script:run.Ssid, $Matches[1]
+            Set-Step 2 'done'
+            Set-Step 3 'running'
+            Set-Stage "Wi-Fi connected. Checking the GPS module$($G.Ellipsis)"
+            $script:verifyUntil = (Get-Date).AddSeconds(25)
         } elseif ($line -match '\[wifi\] failed - (.*)') {
-            $result = @('err', "Saved, but the tracker could not join the Wi-Fi: $($Matches[1])")
+            $script:run.WifiFailed = $Matches[1]
+            $finished = $true
         }
     }
-    if (-not $result -and (Get-Date) -gt $script:verifyUntil) {
-        $result = @('warn', 'Saved and flashed, but the tracker did not report its Wi-Fi within 45 seconds.')
-    }
-    if ($result) {
+    if ($finished -or (Get-Date) -gt $script:verifyUntil) {
         $verifyTimer.Stop()
         try { $script:serial.Close() } catch { }
-        if ($result[0] -eq 'ok') { Set-Step 2 'done'; Complete-Run 'ok' $result[1] }
-        else { Complete-Run $result[0] $result[1] 2 }
+        Complete-Verify
     }
 })
 
 function Start-Verify {
     try {
-        $script:serial = New-Object System.IO.Ports.SerialPort $script:run.Port, 115200, 'None', 8, 'One'
-        $script:serial.Encoding = [Text.Encoding]::UTF8
-        $script:serial.DtrEnable = $false
-        $script:serial.RtsEnable = $false
-        $script:serial.Open()
+        $script:serial = Open-TrackerPort $script:run.Port
     } catch {
         Complete-Run 'warn' "Saved and flashed, but $($script:run.Port) could not be opened to check the Wi-Fi: $($_.Exception.Message)" 2
         return
@@ -1019,33 +1577,76 @@ $btnSave.Add_Click({
 
     if (-not $ssid) { Show-Banner 'err' 'Enter the hotspot Wi-Fi name.'; $cbSsid.Focus(); return }
     if ($pass.Length -gt 0 -and $pass.Length -lt 8) { Show-Banner 'err' 'A Wi-Fi password has at least 8 characters.'; $tbPass.Focus(); return }
+    # An empty password only goes through on purpose (open hotspot): the second press confirms it.
+    if (-not $pass -and $script:noPassOk -ne $ssid) {
+        $script:noPassOk = $ssid
+        Show-Banner 'warn' "No password for '$ssid'. Type it, or press Save again if this hotspot has none."
+        $tbPass.Focus(); return
+    }
     if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$' -or -not [System.Net.IPAddress]::TryParse($ip, [ref]$parsed)) {
         Show-Banner 'err' "'$ip' is not a valid IP address. Connect the laptop to the hotspot and press Detect again."; $tbIp.Focus(); return
     }
     if ($cbFirearm.Text -notmatch '^\s*(\d+)') { Show-Banner 'err' 'Choose the firearm (its number comes first).'; $cbFirearm.Focus(); return }
     $equipment = [int]$Matches[1]
-    if ($port -notmatch '^COM\d+$') { Show-Banner 'err' 'No tracker port. Plug the ESP32 in by USB and press Refresh.'; return }
+    # No USB cable: the firmware goes over Wi-Fi, through the backend, to a tracker that reports there.
+    $wifi = $port -notmatch '^COM\d+$'
+    if ($wifi) {
+        if (-not (Get-LastWifiReport (Get-DeviceId))) {
+            Show-Banner 'err' 'No tracker on USB, and none has reported over Wi-Fi yet. Plug the ESP32 in by USB; it is picked up by itself.'
+            return
+        }
+        $current = Get-ConfigDefine 'WIFI_SSID'
+        if ($current -and $current -ne $ssid -and $script:wifiMoveOk -ne $ssid) {
+            $script:wifiMoveOk = $ssid
+            Show-Banner 'warn' "The tracker is on '$current'. Sent over Wi-Fi, these settings move it to '$ssid'; if '$ssid' is out of its reach, it then needs the USB cable or its phone setup page. Press Save again to go ahead."
+            return
+        }
+    }
     $cli = Find-ArduinoCli
     if (-not $cli) { Show-Banner 'err' 'arduino-cli was not found. Install it first (RUNNING_THE_SYSTEM.txt, step 5.1).'; return }
 
-    # The upload needs the USB port: pause live status now, resume after the run (Complete-Run).
-    $script:resumeLive = [bool]$script:live
-    if ($script:live) { Stop-Live }
+    # Pause live status now (the upload needs the USB port; over Wi-Fi the check shows the lines), resume
+    # after the run (Complete-Run).
+    $script:resumeLive = [bool]$script:liveSource
+    if ($script:liveSource) { Stop-Live -KeepLock }
 
-    $script:run = @{ Ssid = $ssid; Port = $port; Saved = $false }
+    # Take the upload lock, then wait for the port: live-status terminals of this tool let go of it.
+    Set-Busy $true
+    $problem = $null
+    if (-not $wifi) {
+        Set-Stage "Getting the USB port ready$($G.Ellipsis)"
+        if (-not (Enter-PortLock)) {
+            $problem = 'Another setup window is uploading to the tracker. Wait for it to finish, then press Save again.'
+        } elseif (-not (Wait-PortFree $port)) {
+            $problem = "$port is in use by another program (Arduino IDE Serial Monitor, arduino-cli monitor, PuTTY$($G.Ellipsis)). Close it, then press Save again."
+        }
+    }
+    if ($problem) {
+        Exit-PortLock
+        Stop-Stage 'Stopped.' $false
+        Show-Banner 'err' $problem
+        Set-Busy $false
+        if ($script:resumeLive) { Start-Live -Quiet }
+        $script:resumeLive = $false
+        return
+    }
+
+    $build = Get-Date -Format 'yyyyMMdd-HHmmss'
+    $script:run = @{ Ssid = $ssid; Port = $port; Saved = $false; Wifi = $wifi; Build = $build }
+    $script:steps[1][1].Text = $(if ($wifi) { 'Build the firmware and send it over Wi-Fi' } else { 'Build and upload the firmware' })
+    $script:steps[2][1].Text = $(if ($wifi) { 'Tracker installs it and reports back' } else { 'Check the Wi-Fi connection' })
     Reset-Steps
     Clear-Log
     Set-Step 0 'running'
     try {
-        Write-TrackerConfig $ssid $pass $ip $equipment
+        Write-TrackerConfig $ssid $pass $ip $equipment $build
     } catch {
-        Set-Step 0 'failed'
-        Show-Banner 'err' "Could not write config.h: $($_.Exception.Message)"
+        Complete-Run 'err' "Could not write config.h: $($_.Exception.Message)" 0
         return
     }
     Set-Step 0 'done'
-    Write-Log "Settings: Wi-Fi '$ssid', server http://${ip}:$ApiPort, firearm $equipment"
-    Write-Log "Uploading to $port (erases the old settings first)"
+    Write-Log "Settings: Wi-Fi '$ssid', server http://${ip}:$ApiPort, firearm $equipment (build $build)"
+    Write-Log $(if ($wifi) { 'No USB cable: the firmware goes to the tracker over Wi-Fi, through the backend on this laptop.' } else { "Uploading to $port (erases the old settings first)" })
 
     Set-Step 1 'running'
     Set-Busy $true
@@ -1053,8 +1654,11 @@ $btnSave.Add_Click({
 
     foreach ($f in @($OutLog, $ErrLog)) { Set-Content -Path $f -Value '' -Encoding ascii }
     $script:readPos = @{}
-    $arguments = @('compile', '--upload', '-p', $port, '--fqbn', $Fqbn,
-                   '--board-options', 'EraseFlash=all', "`"$SketchDir`"")
+    $arguments = $(if ($wifi) {
+        @('compile', '--fqbn', $Fqbn, '--output-dir', "`"$BuildDir`"", "`"$SketchDir`"")
+    } else {
+        @('compile', '--upload', '-p', $port, '--fqbn', $Fqbn, '--board-options', 'EraseFlash=all', "`"$SketchDir`"")
+    })
     try {
         $script:proc = Start-Process -FilePath $cli -ArgumentList $arguments -PassThru -WindowStyle Hidden `
             -RedirectStandardOutput $OutLog -RedirectStandardError $ErrLog
@@ -1067,14 +1671,16 @@ $btnSave.Add_Click({
 
 $form.Add_FormClosing({
     param($src, $e)
-    if ($script:busy) {
+    # Waiting for the tracker to take an update over Wi-Fi may close: the update keeps waiting on the backend.
+    if ($script:busy -and -not $script:run.Staged) {
         $e.Cancel = $true
         Show-Banner 'warn' 'Please wait until the upload finishes. Closing now can leave the tracker half-flashed.'
         return
     }
     $script:monitorPort = ($cbPort.Text -split '\s')[0]
     Stop-Live
-    $flashTimer.Stop(); $verifyTimer.Stop(); $animTimer.Stop()
+    $flashTimer.Stop(); $verifyTimer.Stop(); $animTimer.Stop(); $watchTimer.Stop()
+    Exit-PortLock
     try { if ($script:serial -and $script:serial.IsOpen) { $script:serial.Close() } } catch { }
 })
 
@@ -1084,7 +1690,9 @@ $form.Add_Shown({
     $form.Refresh()
     Update-Ports
     Update-Networks
+    Update-Password
     Update-Ip
+    $script:netSignature = Get-NetworkSignature
     Update-Firearms
     Update-Wrap
     Fit-Height
@@ -1092,6 +1700,9 @@ $form.Add_Shown({
     Move-ToCenter
     $form.Cursor = [System.Windows.Forms.Cursors]::Default
     [void]$tbPass.Focus()
+    # No USB cable: show how the tracker is doing over Wi-Fi right away (there is no port to hold).
+    if (($cbPort.Text -split '\s')[0] -notmatch '^COM\d+$') { Start-WifiLive }
+    $watchTimer.Start()
 })
 
 # ================================================================ safety net
@@ -1104,6 +1715,7 @@ function Report-UiError([System.Exception]$Exception) {
         if ($script:busy -and -not ($script:proc -and -not $script:proc.HasExited)) {
             $flashTimer.Stop(); $verifyTimer.Stop()
             try { if ($script:serial -and $script:serial.IsOpen) { $script:serial.Close() } } catch { }
+            Exit-PortLock
             Stop-Stage 'Stopped.' $false
             Set-Busy $false
         }

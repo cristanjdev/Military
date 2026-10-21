@@ -1,6 +1,7 @@
 # IoT Tracker — ESP32 + GPS (GY-NEO6MV2 or NEO-M8N)
 
-GPS tracker that posts HMAC-signed coordinates to `POST /api/v1/gps/ingest`.
+GPS tracker that posts HMAC-signed coordinates to `POST /api/v1/gps/ingest` and, while it
+has no fix, its GPS status to `POST /api/v1/gps/status`.
 
 - **Sketch:** `firmware/armory_tracker/` (open `armory_tracker.ino`)
 - **No hardware yet?** `simulator/gps_simulator.py`
@@ -154,9 +155,24 @@ Take the device outdoors and watch Serial Monitor:
 [gps] UART2 rx=18 tx=19 @9600 baud
 [wifi] connected  ip=192.168.1.50  rssi=-52 dBm  channel 11 (2.4 GHz)
 [gps] no fix yet (satellites in view=13, used=3)  <- locking on, keep it still
+[link] laptop reachable at 192.168.1.100 - it shows this status live, also without USB
 [gps] 8.484512, 124.657089  sats=8  2026-09-13T04:21:30Z
 [post] HTTP 200  {"ok":true,"gps_log_id":15,"inside_geofence":true,"inside_armory":false}
 ```
+
+Without a USB cable (on a power bank), the same status shows over Wi-Fi in the setup
+window's **Watch live** and in `iot\setup-tracker.bat monitor`. Until it has a fix,
+the tracker sends its status line to `POST /api/v1/gps/status` every 10 s. The backend
+writes it, and every position, to `backend\storage\logs\trackers.log`. If the hotspot
+gives the laptop a new address, the tracker finds the laptop again by itself
+(`[link] laptop found at ...`).
+
+**Save without USB.** With the tracker on the hotspot, **Save to tracker** builds the
+firmware and leaves it on the backend (`backend\storage\app\firmware`, removed once
+installed). The tracker's next report is answered with an update offer. The tracker
+downloads it with a signed request, checks its MD5, installs it and restarts. This needs
+firmware that supports updates over Wi-Fi, so the first upload of such firmware still
+goes over USB.
 
 Then open the dashboard live map as a staff role and confirm the marker appears.
 GPS pages are restricted to Administrator, Command Officer, S4 Officer, and Armory
@@ -198,7 +214,7 @@ transaction itself; send a mismatched one and the fix is rejected.
 | `409` | No Active/Overdue transaction with tracking on, or duplicate/out-of-order fix | issue the firearm; check the clock |
 | `422` | Invalid field, or timestamp too old/too far ahead | check GPS time sync |
 | `429` | Rate limited (60 req/s bucket) | slow down |
-| `503` | `IOT_HMAC_SECRET` not set on the server | set it, then `php artisan config:clear` |
+| `503` | MySQL stopped, or `IOT_HMAC_SECRET` not set on the server | start MySQL; or set the secret, then `php artisan config:clear` |
 
 The firmware retries only `429`, `5xx`, and transport errors. Configuration
 failures such as `401` and `409` are logged and dropped instead of looping.

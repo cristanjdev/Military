@@ -3,6 +3,7 @@
  * ============================
  * Hardware : ESP32-WROOM-32 + GY-NEO6MV2 (u-blox NEO-6M)
  * Endpoint : POST /api/v1/gps/ingest   (HMAC-SHA256 signed body)
+ *            POST /api/v1/gps/status   (same signing; what the GPS sees while there is no fix)
  *
  * Setup:
  *   1. Copy config.example.h -> config.h and edit it.
@@ -36,6 +37,8 @@
 #include <WiFiManager.h> /* phone setup page: tzapu/WiFiManager */
 #include <Preferences.h> /* settings kept in flash across power cycles */
 #include <Ticker.h>
+#include <esp_system.h> /* esp_reset_reason() */
+#include <Update.h>     /* firmware updates over Wi-Fi */
 
 #if HAS_LCD
 #include <Wire.h>
@@ -73,6 +76,17 @@
 #define API_PORT 8000 /* used when only an IP address is typed on the setup page */
 #endif
 
+/* Reaching the laptop over the hotspot. Override in config.h. */
+#ifndef STATUS_INTERVAL_MS
+#define STATUS_INTERVAL_MS 10000 /* while there is no position to send, the laptop still hears what the GPS sees */
+#endif
+#ifndef LAPTOP_SEARCH_EVERY_MS
+#define LAPTOP_SEARCH_EVERY_MS 300000 /* at most this often, look for a laptop whose address changed */
+#endif
+#ifndef FIRMWARE_BUILD
+#define FIRMWARE_BUILD __DATE__ " " __TIME__ /* the setup tool writes its own build id into config.h */
+#endif
+
 /* ========================= state ========================= */
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(2); /* UART2 */
@@ -95,6 +109,23 @@ Ticker setupBlinker;
 String apiUrl;      /* from the phone setup page, else API_URL in config.h */
 unsigned long lastWifiRetryMs = 0;
 time_t lastAcceptedEpoch = 0; /* keeps captured_at strictly increasing */
+unsigned long lastStatusMs = 0;
+int lastLaptopAnswer = 0;  /* last status report: HTTP code, < 0 = laptop not reached; [link] lines print on change */
+int laptopMisses = 0;      /* sends in a row that did not reach the laptop */
+unsigned long lastLaptopSearchMs = 0;
+static const int POST_BAD_URL = -1000; /* postSigned(): the address itself is unusable */
+/* On a power bank there is no USB output to read, so the laptop is told why the tracker (re)started
+ * and why its Wi-Fi dropped, as soon as it can be reached. */
+String pendingNote;
+unsigned long lastNoteTryMs = 0;
+volatile uint16_t lastWifiReason = 0; /* 802.11 reason the last Wi-Fi attempt or link ended with */
+String joinTrouble;                   /* why joining failed, for the next note */
+/* New firmware the laptop offered in answer to a report (setup tool, no USB cable); see runUpdate(). */
+String updateBuild;
+String updateMd5;
+size_t updateSize = 0;
+int updateTries = 0;
+unsigned long lastUpdateTryMs = 0;
 
 /* ---------------------------------------------------------------------------
  * Keep every type declaration ABOVE the first function definition in this file.
@@ -317,6 +348,21 @@ String setupFieldValue(const String& url) {
   return host;
 }
 
+/* Why the chip started this time. */
+const char* resetReasonText() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_EXT: return "reset button";
+    case ESP_RST_SW: return "restart by the firmware (BOOT held for phone setup, or setup page done)";
+    case ESP_RST_PANIC: return "CRASH (firmware panic)";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "WATCHDOG (firmware stuck)";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (the supply voltage dipped: weak power bank, cable or battery)";
+    default: return "unknown";
+  }
+}
+
 /* Hold BOOT for SETUP_HOLD_MS: restart straight into phone setup mode. */
 void checkSetupButton() {
   static unsigned long pressedSince = 0;
@@ -380,9 +426,12 @@ bool joinWifi() {
   if (!ssidVisible(ssid)) {
     Serial.printf("\n[wifi] failed - \"%s\" not found: the hotspot is off, or it is on 5 GHz "
                   "(turn the phone's own Wi-Fi off / choose 2.4 GHz). Hold BOOT 3 s to change it.\n", ssid.c_str());
+    joinTrouble = "\"" + ssid + "\" not found";
   } else {
-    Serial.printf("\n[wifi] failed - \"%s\" did not accept the connection: check the password. "
-                  "Hold BOOT 3 s to change it.\n", ssid.c_str());
+    const char* why = WiFi.disconnectReasonName((wifi_err_reason_t) lastWifiReason);
+    Serial.printf("\n[wifi] failed - \"%s\" did not accept the connection (%s): check the password. "
+                  "Hold BOOT 3 s to change it.\n", ssid.c_str(), why);
+    joinTrouble = "\"" + ssid + "\" did not accept the connection (" + why + ")";
   }
   return false;
 }
@@ -597,11 +646,11 @@ void lcdShowFix(double lat, double lon, unsigned long sats) {
 #endif
 
 /* ========================= transmit ========================= */
-SendResult postFix(const String& body) {
-  if (WiFi.status() != WL_CONNECTED) return SEND_RETRY;
-
+/* POST a signed JSON body. Returns the HTTP status, or a negative HTTPClient error when the laptop
+ * was not reached. Keep the timeouts short: the GPS is not read (feedGps) while this waits. */
+int postSigned(const String& url, const String& body, String& resp, int32_t connectMs, uint16_t answerMs) {
   /* The address can be changed on the phone setup page, so pick plain or TLS by its scheme. */
-  const bool https = apiUrl.startsWith("https://");
+  const bool https = url.startsWith("https://");
   WiFiClient plainClient;
   WiFiClientSecure tlsClient;
   if (https) {
@@ -613,21 +662,256 @@ SendResult postFix(const String& body) {
   }
 
   HTTPClient http;
-  if (!http.begin(https ? static_cast<WiFiClient&>(tlsClient) : plainClient, apiUrl)) {
-    Serial.println("[post] could not open connection");
-    return SEND_RETRY;
-  }
+  if (!http.begin(https ? static_cast<WiFiClient&>(tlsClient) : plainClient, url)) return POST_BAD_URL;
 
-  http.setTimeout(8000);
+  http.setConnectTimeout(connectMs);
+  http.setTimeout(answerMs);
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Accept", "application/json");
   http.addHeader("X-Armory-Signature", hmacSha256(HMAC_SECRET, body));
   http.addHeader("User-Agent", "ArmoryDB-ESP32/2.0");
 
   int code = http.POST(body);
-  String resp = http.getString();
+  resp = http.getString();
   http.end();
+  return code;
+}
 
+/* The laptop answers a report with "update" when new firmware waits for this tracker. */
+void checkUpdateOffer(const String& resp) {
+  if (resp.indexOf("\"update\"") < 0) return;
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  StaticJsonDocument<512> doc;
+#endif
+  if (deserializeJson(doc, resp)) return;
+  const char* build = doc["update"]["build"];
+  const char* md5 = doc["update"]["md5"];
+  const size_t size = doc["update"]["size"] | 0;
+  if (!build || !md5 || size == 0 || strcmp(build, FIRMWARE_BUILD) == 0 || updateBuild == build) return;
+  updateBuild = build;
+  updateMd5 = md5;
+  updateSize = size;
+  updateTries = 0;
+  lastUpdateTryMs = 0;
+  Serial.printf("[ota] the laptop offers new firmware (build %s, %u KB)\n", build, (unsigned) (size / 1024));
+}
+
+/* Sends in a row that did not reach the laptop decide when to look for it elsewhere (findLaptop). */
+void noteLaptopAnswer(int code) { laptopMisses = code > 0 ? 0 : laptopMisses + 1; }
+
+/* .../api/v1/gps/ingest -> .../api/v1/gps/status ('' for an address without that path). */
+String statusUrl() {
+  const int at = apiUrl.lastIndexOf("/gps/ingest");
+  return at < 0 ? String() : apiUrl.substring(0, at) + "/gps/status";
+}
+
+/* One status line to the laptop. The backend notes it in storage/logs/trackers.log and the setup tool
+ * shows it live, so a tracker on a hotspot can be checked without a USB cable. Returns the HTTP code
+ * (< 0: the laptop was not reached). The [link] line on USB says whether the laptop answers; it prints
+ * only when that changes. */
+int sendStatus(const char* line) {
+  const String url = statusUrl();
+  if (url.length() == 0) return POST_BAD_URL;
+
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  JsonDocument doc;
+#else
+  StaticJsonDocument<512> doc;
+#endif
+  doc["device_id"] = DEVICE_ID;
+  doc["equipment_id"] = EQUIPMENT_ID;
+  doc["firmware"] = FIRMWARE_BUILD;
+  doc["line"] = line;
+  doc["satellites_in_view"] = satellitesInView();
+  doc["satellites_used"] = satellitesUsed();
+  doc["rssi"] = WiFi.RSSI();
+  String body;
+  serializeJson(doc, body);
+
+  String resp;
+  const int code = postSigned(url, body, resp, 2000, 3000);
+  noteLaptopAnswer(code);
+  checkUpdateOffer(resp);
+  if (code == lastLaptopAnswer) return code;
+  lastLaptopAnswer = code;
+
+  const String laptop = setupFieldValue(apiUrl);
+  if (code >= 200 && code < 300) {
+    Serial.printf("[link] laptop reachable at %s - it shows this status live, also without USB\n", laptop.c_str());
+  } else if (code == 404) {
+    Serial.println("[link] laptop answered HTTP 404: its backend has no /gps/status yet (update it); positions still work");
+  } else if (code > 0) {
+    Serial.printf("[link] laptop answered HTTP %d  %s\n", code, resp.c_str());
+  } else {
+    Serial.printf("[link] laptop NOT reachable at %s (error %d) <- laptop on this hotspot? backend running "
+                  "with --host 0.0.0.0?\n", laptop.c_str(), code);
+  }
+  return code;
+}
+
+/* While there is no position to send, the laptop still hears from the tracker every STATUS_INTERVAL_MS:
+ * the same status line as on USB (satellites, GPS wiring). */
+void reportStatus(const char* line) {
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (lastStatusMs != 0 && millis() - lastStatusMs < (unsigned long) STATUS_INTERVAL_MS) return;
+  lastStatusMs = millis();
+  sendStatus(line);
+}
+
+/* A note (why the tracker started, a Wi-Fi drop) goes to the laptop as soon as it can be reached. */
+void sendPendingNote() {
+  if (pendingNote.length() == 0 || WiFi.status() != WL_CONNECTED) return;
+  if (lastNoteTryMs != 0 && millis() - lastNoteTryMs < (unsigned long) STATUS_INTERVAL_MS) return;
+  lastNoteTryMs = millis();
+  if (sendStatus(pendingNote.c_str()) > 0) pendingNote = "";
+}
+
+/* A GPS status line: printed on USB and passed on to the laptop (reportStatus). */
+void gpsStatus(const char* format, ...) {
+  char line[200];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(line, sizeof(line), format, args);
+  va_end(args);
+  Serial.println(line);
+  reportStatus(line);
+}
+
+/* Is the ArmoryDB API listening at this address? Its /api/health names it. */
+bool armoryAt(const IPAddress& ip, uint16_t port, int32_t connectMs) {
+  WiFiClient client;
+  if (!client.connect(ip, port, connectMs)) return false;
+  client.printf("GET /api/health HTTP/1.0\r\nHost: %s\r\nAccept: application/json\r\n\r\n", ip.toString().c_str());
+  String answer;
+  const unsigned long start = millis();
+  while (millis() - start < 2000 && answer.length() < 1024 && (client.connected() || client.available())) {
+    while (client.available()) answer += (char) client.read();
+    feedGps();
+    delay(10);
+  }
+  client.stop();
+  return answer.indexOf("ArmoryDB API") >= 0;
+}
+
+/* A phone hotspot can hand out a new address range each time it is switched on, so the laptop address
+ * saved on the tracker goes stale although the laptop is right there. When the laptop stops answering,
+ * look for the ArmoryDB API on the tracker's own network: first the laptop's old host number in the
+ * new range (the phone usually gives the laptop the same last number), then every other address. The
+ * address that answers is kept in flash, like one typed on the phone setup page. */
+void findLaptop() {
+  lastLaptopSearchMs = millis();
+  if (WiFi.status() != WL_CONNECTED || !apiUrl.startsWith("http://")) return; /* https: a name, not an address */
+
+  const int slash = apiUrl.indexOf('/', 7);
+  const String hostPort = apiUrl.substring(7, slash < 0 ? apiUrl.length() : slash);
+  const String path = slash < 0 ? String("/api/v1/gps/ingest") : apiUrl.substring(slash);
+  const int colon = hostPort.indexOf(':');
+  IPAddress old;
+  if (!old.fromString(colon < 0 ? hostPort : hostPort.substring(0, colon))) return;
+  const uint16_t port = colon < 0 ? 80 : (uint16_t) hostPort.substring(colon + 1).toInt();
+
+  const IPAddress me = WiFi.localIP();
+  const IPAddress gateway = WiFi.gatewayIP();
+  const IPAddress mask = WiFi.subnetMask();
+  /* Host numbers of this network within the tracker's /24 (an iPhone hotspot is a /28). */
+  const int first = (me[3] & mask[3]) + 1;
+  const int last = ((me[3] & mask[3]) | (~mask[3] & 0xFF)) - 1;
+  Serial.printf("[link] laptop silent at %s - looking for it on %d.%d.%d.%d-%d\n",
+                old.toString().c_str(), me[0], me[1], me[2], first, last);
+
+  for (int pass = 0; pass < 2; pass++) {
+    for (int host = first; host <= last; host++) {
+      /* Pass 0: only the old host number, with time to answer. Pass 1: everyone else, quickly. */
+      if ((pass == 0) != (host == old[3]) || host == me[3] || host == gateway[3]) continue;
+      if (WiFi.status() != WL_CONNECTED) return;
+      checkSetupButton();
+      feedGps();
+      const IPAddress candidate(me[0], me[1], me[2], host);
+      if (!armoryAt(candidate, port, pass == 0 ? 1500 : 300)) continue;
+
+      apiUrl = "http://" + candidate.toString() + ":" + String(port) + path;
+      prefs.putString("api_url", apiUrl);
+      laptopMisses = 0;
+      lastLaptopAnswer = 0;
+      lastStatusMs = 0;
+      Serial.printf("[link] laptop found at %s - saved on the tracker; positions and status go there now\n",
+                    candidate.toString().c_str());
+      return;
+    }
+  }
+  Serial.printf("[link] laptop not found on this network - looking again in %d min\n", LAPTOP_SEARCH_EVERY_MS / 60000);
+}
+
+/* Download the offered firmware from the laptop, check its MD5, install it and restart into it. On a
+ * failure the running firmware stays; it tries again a minute later, three times in all. */
+void runUpdate() {
+  if (updateBuild.length() == 0 || updateTries >= 3 || WiFi.status() != WL_CONNECTED) return;
+  if (lastUpdateTryMs != 0 && millis() - lastUpdateTryMs < 60000UL) return;
+  lastUpdateTryMs = millis();
+  updateTries++;
+  const int at = apiUrl.lastIndexOf("/gps/ingest");
+  if (at < 0) return;
+  const String url = apiUrl.substring(0, at) + "/gps/firmware/" + DEVICE_ID;
+  Serial.printf("[ota] downloading build %s from the laptop\n", updateBuild.c_str());
+
+  const bool https = url.startsWith("https://");
+  WiFiClient plainClient;
+  WiFiClientSecure tlsClient;
+  if (https) {
+#if USE_HTTPS && !ALLOW_INSECURE_TLS
+    tlsClient.setCACert(ROOT_CA_CERT);
+#else
+    tlsClient.setInsecure();
+#endif
+  }
+  HTTPClient http;
+  if (!http.begin(https ? static_cast<WiFiClient&>(tlsClient) : plainClient, url)) return;
+  http.setConnectTimeout(3000);
+  http.setTimeout(15000);
+  /* The binary holds the Wi-Fi password and the secret, so the laptop hands it out to signed requests only. */
+  http.addHeader("X-Armory-Signature", hmacSha256(HMAC_SECRET, String("firmware:") + DEVICE_ID + ":" + updateBuild));
+  const int code = http.GET();
+  if (code != 200 || http.getSize() != (int) updateSize) {
+    Serial.printf("[ota] download failed: HTTP %d, %d bytes (expected %u)\n", code, http.getSize(), (unsigned) updateSize);
+    pendingNote = "[ota] download failed: HTTP " + String(code);
+    http.end();
+    if (code == 404) updateBuild = ""; /* withdrawn on the laptop */
+    return;
+  }
+  if (!Update.begin(updateSize) || !Update.setMD5(updateMd5.c_str())) {
+    Serial.printf("[ota] cannot install: %s\n", Update.errorString());
+    pendingNote = String("[ota] cannot install: ") + Update.errorString();
+    http.end();
+    return;
+  }
+  const size_t written = Update.writeStream(*http.getStreamPtr());
+  http.end();
+  if (written != updateSize || !Update.end()) {
+    Serial.printf("[ota] install failed (%s) - keeping the current firmware\n", Update.errorString());
+    pendingNote = String("[ota] install failed (") + Update.errorString() + ") - keeping the current firmware";
+    Update.abort();
+    return;
+  }
+  Serial.printf("[ota] installed build %s - restarting into it\n", updateBuild.c_str());
+  prefs.putBool("after_ota", true);
+  delay(200);
+  ESP.restart();
+}
+
+SendResult postFix(const String& body) {
+  if (WiFi.status() != WL_CONNECTED) return SEND_RETRY;
+
+  String resp;
+  const int code = postSigned(apiUrl, body, resp, 3000, 8000);
+  noteLaptopAnswer(code);
+  checkUpdateOffer(resp);
+
+  if (code == POST_BAD_URL) {
+    Serial.println("[post] could not open connection");
+    return SEND_RETRY;
+  }
   if (code <= 0) {
     Serial.printf("[post] transport error %d — will retry\n", code);
     return SEND_RETRY;
@@ -654,7 +938,7 @@ SendResult postFix(const String& body) {
       Serial.println("[post] rate limited — will retry");
       return SEND_RETRY;
     case 503:
-      Serial.println("[post] server reports IOT_HMAC_SECRET is not configured.");
+      Serial.println("[post] server unavailable: MySQL is stopped, or IOT_HMAC_SECRET is not set (see its message above).");
       return SEND_RETRY;
     default:
       return (code >= 500) ? SEND_RETRY : SEND_DROP;
@@ -707,10 +991,19 @@ void setup() {
   Serial.printf("device=%s  equipment_id=%d\n", DEVICE_ID, EQUIPMENT_ID);
 
   prefs.begin("armory", false);
+  /* New firmware brings its own settings (config.h), as a USB upload that erases the flash does: a
+   * server address or Wi-Fi kept from the phone setup page or a laptop search belongs to the old one. */
+  if (prefs.getString("build", "") != FIRMWARE_BUILD) {
+    prefs.remove("api_url");
+    prefs.remove("wifi_from_phone");
+    prefs.putString("build", FIRMWARE_BUILD);
+  }
+  const bool afterUpdate = prefs.getBool("after_ota", false);
+  if (afterUpdate) prefs.remove("after_ota");
   apiUrl = prefs.getString("api_url", API_URL);
   pinMode(SETUP_BUTTON_PIN, INPUT_PULLUP);
   Serial.printf("endpoint=%s  (%s)\n", apiUrl.c_str(),
-                prefs.isKey("api_url") ? "set on the phone setup page" : "from config.h");
+                prefs.isKey("api_url") ? "saved on the tracker: phone setup page, or found on the hotspot" : "from config.h");
   Serial.printf("interval=%d ms  transport=%s\n", TX_INTERVAL_MS,
                 apiUrl.startsWith("https://") ? "HTTPS" : "HTTP");
   Serial.printf("[setup] hold BOOT for %d s at any time to change Wi-Fi / server from a phone\n",
@@ -758,7 +1051,12 @@ void setup() {
                 LCD_I2C_ADDR, I2C_SDA_PIN, I2C_SCL_PIN);
 #endif
 
-  if (prefs.getBool("setup_next", false)) {
+  /* Keep the reason of every Wi-Fi drop or failed attempt: shown on USB and told to the laptop. */
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { lastWifiReason = info.wifi_sta_disconnected.reason; },
+               ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
+
+  const bool setupRequested = prefs.getBool("setup_next", false);
+  if (setupRequested) {
     prefs.putBool("setup_next", false);
     runSetupPortal();
     if (WiFi.status() != WL_CONNECTED) joinWifi();
@@ -767,6 +1065,15 @@ void setup() {
     runSetupPortal();
     if (WiFi.status() != WL_CONNECTED) joinWifi();
   }
+
+  /* Told to the laptop once it can be reached (sendPendingNote): on a power bank, the only way to know. */
+  pendingNote = String("[boot] started (build ") + FIRMWARE_BUILD + "): " +
+                (setupRequested  ? "BOOT button held 3 s, so the phone setup page was open first"
+                 : afterUpdate   ? "new firmware installed over Wi-Fi"
+                                 : resetReasonText());
+  if (joinTrouble.length() > 0) pendingNote += "; the first Wi-Fi try failed (" + joinTrouble + "), so the phone setup page was open first";
+  joinTrouble = "";
+  Serial.println(pendingNote);
 
 #if HAS_LCD
   lcdStatus(WiFi.status() == WL_CONNECTED ? "WiFi connected" : "WiFi FAILED",
@@ -799,9 +1106,18 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED && millis() - lastWifiRetryMs > 15000) {
     lastWifiRetryMs = millis();
-    Serial.println("[wifi] link down — reconnecting");
+    const String why = WiFi.disconnectReasonName((wifi_err_reason_t) lastWifiReason); /* before disconnect() replaces it */
+    Serial.printf("[wifi] link down (%s) — reconnecting\n", why.c_str());
     WiFi.disconnect();
-    joinWifi();
+    if (joinWifi() && pendingNote.length() == 0) pendingNote = "[wifi] the link had dropped (" + why + ") and is back";
+  }
+  sendPendingNote();
+  runUpdate();
+
+  /* The laptop stopped answering: its address may have changed with the hotspot. */
+  if (laptopMisses >= 3 && WiFi.status() == WL_CONNECTED &&
+      (lastLaptopSearchMs == 0 || millis() - lastLaptopSearchMs > (unsigned long) LAPTOP_SEARCH_EVERY_MS)) {
+    findLaptop();
   }
 
 #if HAS_TAMPER_SWITCH
@@ -843,10 +1159,10 @@ void loop() {
     const GpsLink link = gpsLinkSinceLastCheck();
     if (link != GPS_LINK_OK) {
       if (link == GPS_LINK_SILENT) {
-        Serial.println("[gps] NO DATA from the GPS module <- check GPS TX -> D18 and GND; header pins must be "
-                       "soldered (this is a wire problem, not the sky)");
+        gpsStatus("[gps] NO DATA from the GPS module <- check GPS TX -> D18 and GND; header pins must be "
+                  "soldered (this is a wire problem, not the sky)");
       } else {
-        Serial.printf("[gps] GARBLED data from the GPS module <- wrong speed? GPS_BAUD is %d\n", GPS_BAUD);
+        gpsStatus("[gps] GARBLED data from the GPS module <- wrong speed? GPS_BAUD is %d", GPS_BAUD);
       }
 #if HAS_LCD
       lcdStatus(link == GPS_LINK_SILENT ? "GPS: NO DATA" : "GPS: BAD DATA", "check TX->D18");
@@ -855,14 +1171,14 @@ void loop() {
     }
 #endif
     if (fix == FIX_NONE) {
-      Serial.printf("[gps] no fix yet (satellites in view=%lu, used=%lu)%s\n", satellitesInView(), satellitesUsed(),
-                    satellitesInView() < 4 ? "  <- sky blocked? move to open sky" : "  <- locking on, keep it still");
+      gpsStatus("[gps] no fix yet (satellites in view=%lu, used=%lu)%s", satellitesInView(), satellitesUsed(),
+                satellitesInView() < 4 ? "  <- sky blocked? move to open sky" : "  <- locking on, keep it still");
     } else if (fix == FIX_STALE) {
-      Serial.printf("[gps] fix lost: last position is %.1f s old, holding (in view=%lu)\n",
-                    gps.location.age() / 1000.0, satellitesInView());
+      gpsStatus("[gps] fix lost: last position is %.1f s old, holding (in view=%lu)",
+                gps.location.age() / 1000.0, satellitesInView());
     } else {
-      Serial.printf("[gps] fix too weak: used=%lu (need >=%d), hdop=%.1f (need <=%.1f), holding\n",
-                    satellitesUsed(), MIN_SATELLITES, currentHdop(), (double) MAX_HDOP);
+      gpsStatus("[gps] fix too weak: used=%lu (need >=%d), hdop=%.1f (need <=%.1f), holding",
+                satellitesUsed(), MIN_SATELLITES, currentHdop(), (double) MAX_HDOP);
     }
 #if HAS_LCD
     lcdStatus(fix == FIX_WEAK ? "Weak GPS fix" : (fix == FIX_STALE ? "GPS fix lost" : "Acquiring GPS"),
@@ -873,7 +1189,7 @@ void loop() {
 
   time_t epoch;
   if (!gpsEpoch(&epoch)) {
-    Serial.println("[gps] fix has no valid UTC date/time yet — holding transmission");
+    gpsStatus("[gps] fix has no valid UTC date/time yet — holding transmission");
     return;
   }
 
@@ -891,6 +1207,7 @@ void loop() {
 #endif
   doc["equipment_id"] = EQUIPMENT_ID;
   doc["device_id"] = DEVICE_ID;
+  doc["firmware"] = FIRMWARE_BUILD; /* lets the laptop offer an update in its answer */
   doc["captured_at"] = formatUtc(epoch);
   doc["latitude"] = gps.location.lat();
   doc["longitude"] = gps.location.lng();
