@@ -48,7 +48,7 @@ STEP 2: CLONE THE PROJECT
    cd C:\Projects
 
 3. Clone the repository:
-   git clone https://github.com/blutech18/Military.git
+   git clone https://github.com/cristanjdev/Military.git
 
 4. Enter the project folder:
    cd Military
