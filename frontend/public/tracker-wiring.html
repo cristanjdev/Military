@@ -1,0 +1,568 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Armory Tracker Wiring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+html { color-scheme: light; } body { margin: 0; font-size: 14px; } [hidden] { display: none !important; }
+/* Layout: a Tinkercad-style workplane (always light, like the real editor) framed by themed page chrome,
+   then the wiring table and parts list underneath. */
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --fg: #17212b;
+  --muted: #5b6877;
+  --line: #d9e0e7;
+  --accent: #1f6fd1;
+  --accent-soft: #e3eefb;
+  --chip: #eef2f6;
+
+  /* workplane: fixed on purpose, it is a drawing surface */
+  --wp-bg: #eaf0f5;
+  --wp-grid: #d6e0e9;
+  --wp-ink: #22303c;
+  --wp-muted: #6a7b8b;
+  --wp-tag: #ffffff;
+
+  --font-ui: "Archivo", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10161d; --surface: #18212b; --fg: #e6edf3; --muted: #93a3b3; --line: #2a3643;
+    --accent: #6aa8f0; --accent-soft: #1b2c40; --chip: #212c38; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10161d; --surface: #18212b; --fg: #e6edf3; --muted: #93a3b3; --line: #2a3643;
+  --accent: #6aa8f0; --accent-soft: #1b2c40; --chip: #212c38; color-scheme: dark;
+}
+
+body { background: var(--bg); color: var(--fg); font-family: var(--font-ui); line-height: 1.5; }
+.page {
+  max-width: 1240px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 56px;
+  display: grid; gap: 22px;
+}
+header { display: grid; gap: 6px; }
+.eyebrow { font: 600 12px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+h1 { margin: 0; font-size: clamp(26px, 4vw, 36px); line-height: 1.1; font-weight: 700; text-wrap: balance; }
+.lede { margin: 0; color: var(--muted); max-width: 70ch; }
+
+.editor { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.toolbar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 10px 12px; border-bottom: 1px solid var(--line);
+}
+.tabs { display: inline-flex; background: var(--chip); border-radius: 8px; padding: 3px; gap: 2px; }
+.tabs button {
+  font: 600 13px/1 var(--font-ui); color: var(--muted); background: transparent; border: 0;
+  padding: 8px 14px; border-radius: 6px; cursor: pointer;
+}
+.tabs button[aria-selected="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 1px 2px rgb(0 0 0 / .12); }
+.tabs button:focus-visible, .conn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.hint { font-size: 13px; color: var(--muted); }
+
+.canvas { position: relative; overflow-x: auto; background: var(--wp-bg); }
+.canvas svg { display: block; width: 100%; min-width: 820px; height: auto; }
+.wire, .usb { cursor: pointer; transition: opacity .15s; }
+svg.focus .wire:not(.on), svg.focus .usb:not(.on) { opacity: .18; }
+.tip {
+  position: absolute; pointer-events: none; max-width: 280px; z-index: 2;
+  background: #17212b; color: #f2f6fa; font-size: 13px; line-height: 1.4;
+  padding: 8px 10px; border-radius: 6px; box-shadow: 0 6px 18px rgb(0 0 0 / .25);
+}
+.tip b { font-family: var(--font-mono); font-weight: 600; display: block; margin-bottom: 2px; }
+
+.below { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+@media (max-width: 860px) { .below { grid-template-columns: minmax(0, 1fr); } }
+section h2 { margin: 0 0 10px; font-size: 18px; font-weight: 700; }
+.group-title { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+.group-title:first-of-type { margin-top: 0; }
+.conns { display: grid; gap: 2px; }
+.conn {
+  display: grid; grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1.3fr); gap: 10px; align-items: start;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+}
+.conn:hover, .conn.on { background: var(--accent-soft); }
+.sw { width: 14px; height: 14px; border-radius: 3px; margin-top: 3px; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .25); }
+.pin { font: 500 13px/1.45 var(--font-mono); }
+.why { font-size: 13.5px; color: var(--muted); }
+@media (max-width: 520px) { .conn { grid-template-columns: 14px minmax(0, 1fr); } .why { grid-column: 2; } }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+.parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 14px; }
+.parts li { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 6px; }
+.qty { font: 600 13px/1.5 var(--font-mono); color: var(--accent); font-variant-numeric: tabular-nums; }
+.notes { margin: 0; padding-left: 18px; display: grid; gap: 7px; font-size: 14px; }
+.notes li::marker { color: var(--accent); }
+.later { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.later span { font: 500 12px/1 var(--font-mono); background: var(--chip); color: var(--muted); padding: 6px 8px; border-radius: 5px; }
+.stack { display: grid; gap: 18px; }
+code { font-family: var(--font-mono); font-size: .92em; }
+
+@media (prefers-reduced-motion: reduce) { .wire, .usb { transition: none; } }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div class="eyebrow">ArmoryDB · ESP32 GPS tracker</div>
+    <h1>Armory Tracker Wiring</h1>
+    <p class="lede">The tracker as it is built now: an ESP32 DevKit and a GPS module on a breadboard, three status lights, and a power bank on the USB port. Pins match the tracker's firmware settings.</p>
+  </header>
+
+  <div class="editor">
+    <div class="toolbar">
+      <div class="tabs" role="tablist" aria-label="Diagram view">
+        <button id="tab-board" role="tab" aria-selected="true" aria-controls="view-board">Breadboard</button>
+        <button id="tab-schem" role="tab" aria-selected="false" aria-controls="view-schem">Schematic</button>
+      </div>
+      <span class="hint">Hover or tap a wire to see what it connects.</span>
+    </div>
+    <div class="canvas" id="canvas">
+      <div id="view-board" role="tabpanel" aria-labelledby="tab-board"></div>
+      <div id="view-schem" role="tabpanel" aria-labelledby="tab-schem" hidden></div>
+      <div class="tip" id="tip" hidden></div>
+    </div>
+  </div>
+
+  <div class="below">
+    <section>
+      <h2>Connections</h2>
+      <div id="conns"></div>
+    </section>
+    <div class="stack">
+      <section class="card">
+        <h2>Parts</h2>
+        <ul class="parts">
+          <li><span class="qty">1×</span><span>ESP32 DevKit V1, 30-pin (ESP-WROOM-32)</span></li>
+          <li><span class="qty">1×</span><span>GPS module, GY-NEO6MV2 or NEO-M8N, with ceramic antenna</span></li>
+          <li><span class="qty">3×</span><span>5 mm LED: green, blue, red</span></li>
+          <li><span class="qty">3×</span><span>330 Ω resistor (orange, orange, brown)</span></li>
+          <li><span class="qty">1×</span><span>Breadboard</span></li>
+          <li><span class="qty">12×</span><span>Jumper wires (male-to-male; male-to-female for the GPS)</span></li>
+          <li><span class="qty">1×</span><span>Power bank and micro-USB data cable</span></li>
+        </ul>
+      </section>
+      <section class="card">
+        <h2>Before you power it</h2>
+        <ul class="notes">
+          <li>TX always goes to RX: GPS TX to D18, GPS RX to D19.</li>
+          <li>Solder the GPS header pins. Loose pins light the GPS LED but send no data.</li>
+          <li>The GPS runs on 3V3, not 5V.</li>
+          <li>Each LED's long leg (+) faces the resistor; the short leg (−) goes to ground.</li>
+          <li>Pin order is the common 30-pin DevKit V1. If your board differs, go by the labels printed next to each pin.</li>
+          <li>Keep the ceramic antenna facing the sky.</li>
+        </ul>
+        <div class="group-title" style="margin-top:16px">In the firmware, not wired yet</div>
+        <div class="later"><span>Buzzer · D23</span><span>Tamper switch · D27</span><span>Battery monitor · D34</span><span>LCD · D21/D22</span></div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const NS = "http://www.w3.org/2000/svg";
+  const P = 18;                       // breadboard hole pitch (0.1 in)
+  const BX = 210, BY = 290;           // breadboard top-left
+  const COLS = 47;
+  const hx = c => BX + 30 + (c - 1) * P;
+  // l1..l5: wire lanes between row j and the bottom rails
+  const R = { Tp: 1, Tm: 2, a: 3.6, b: 4.6, c: 5.6, d: 6.6, e: 7.6, f: 10.6, g: 11.6, h: 12.6, i: 13.6, j: 14.6,
+              l1: 15.2, l2: 15.7, l3: 16.2, l4: 16.7, l5: 17.2, Bp: 17.6, Bm: 18.6 };
+  const hy = r => BY + (typeof r === "string" ? R[r] : r) * P;
+  const BOARD_H = 19.6 * P, BOARD_W = 30 * 2 + (COLS - 1) * P;
+
+  function el(tag, attrs, parent, text) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text != null) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+
+  const svg = el("svg", { viewBox: "0 0 1170 680", role: "img", "aria-label": "Breadboard wiring of the ESP32 GPS tracker" });
+  const defs = el("defs", {}, svg);
+  defs.innerHTML = `
+    <pattern id="grid" width="18" height="18" patternUnits="userSpaceOnUse"><path d="M18 0H0V18" fill="none" stroke="#d6e0e9" stroke-width="1"/></pattern>
+    <radialGradient id="ledG" cx=".35" cy=".35" r=".75"><stop offset="0" stop-color="#d9ffe4"/><stop offset=".45" stop-color="#3ddc6b"/><stop offset="1" stop-color="#1c8a40"/></radialGradient>
+    <radialGradient id="ledB" cx=".35" cy=".35" r=".75"><stop offset="0" stop-color="#e0ecff"/><stop offset=".45" stop-color="#3b82f6"/><stop offset="1" stop-color="#1d4fb0"/></radialGradient>
+    <radialGradient id="ledR" cx=".35" cy=".35" r=".75"><stop offset="0" stop-color="#ffe3e0"/><stop offset=".45" stop-color="#ff4136"/><stop offset="1" stop-color="#ad1a12"/></radialGradient>
+    <linearGradient id="can" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e3e7ec"/><stop offset="1" stop-color="#aab2bc"/></linearGradient>
+    <linearGradient id="bank" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2d3742"/><stop offset=".5" stop-color="#3b4754"/><stop offset="1" stop-color="#2a333d"/></linearGradient>`;
+  el("rect", { x: 0, y: 0, width: 1170, height: 680, fill: "#eaf0f5" }, svg);
+  el("rect", { x: 0, y: 0, width: 1170, height: 680, fill: "url(#grid)" }, svg);
+
+  /* ---------- breadboard ---------- */
+  const bb = el("g", {}, svg);
+  el("rect", { x: BX + 3, y: BY + 4, width: BOARD_W, height: BOARD_H, rx: 8, fill: "#c7cfd6" }, bb);
+  el("rect", { x: BX, y: BY, width: BOARD_W, height: BOARD_H, rx: 8, fill: "#f4f2ec", stroke: "#d4d0c5" }, bb);
+  el("rect", { x: BX + 8, y: hy(8.55), width: BOARD_W - 16, height: P * 1.1, rx: 3, fill: "#e3dfd4" }, bb);
+  [[0.42, "#e04a3f"], [2.58, "#3b6fd8"], [17.05, "#e04a3f"], [19.15, "#3b6fd8"]].forEach(([r, c]) =>
+    el("line", { x1: BX + 22, x2: BX + BOARD_W - 22, y1: hy(r), y2: hy(r), stroke: c, "stroke-width": 1.6 }, bb));
+  const railHole = c => c % 6 !== 2;
+  const hole = (x, y) => el("rect", { x: x - 3.2, y: y - 3.2, width: 6.4, height: 6.4, rx: 1, fill: "#4a463e" }, bb);
+  for (let c = 1; c <= COLS; c++) {
+    if (railHole(c)) ["Tp", "Tm", "Bp", "Bm"].forEach(r => hole(hx(c), hy(r)));
+    "abcdefghij".split("").forEach(r => hole(hx(c), hy(r)));
+    if (c === 1 || c % 5 === 0)
+      el("text", { x: hx(c), y: hy(3.02), "text-anchor": "middle", "font-size": 7, "font-family": "IBM Plex Mono, monospace", fill: "#9a958a" }, bb, c);
+  }
+  "abcdefghij".split("").forEach(r => {
+    el("text", { x: BX + 13, y: hy(r) + 3, "text-anchor": "middle", "font-size": 8, "font-family": "IBM Plex Mono, monospace", fill: "#9a958a" }, bb, r);
+    el("text", { x: BX + BOARD_W - 13, y: hy(r) + 3, "text-anchor": "middle", "font-size": 8, "font-family": "IBM Plex Mono, monospace", fill: "#9a958a" }, bb, r);
+  });
+  [["Tp", "+", "#e04a3f"], ["Tm", "−", "#3b6fd8"], ["Bp", "+", "#e04a3f"], ["Bm", "−", "#3b6fd8"]].forEach(([r, s, c]) => {
+    el("text", { x: BX + 13, y: hy(r) + 4, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: c }, bb, s);
+    el("text", { x: BX + BOARD_W - 13, y: hy(r) + 4, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: c }, bb, s);
+  });
+
+  /* ---------- resistors and LEDs (under the wires) ---------- */
+  const parts = el("g", {}, svg);
+  const LEDS = [
+    { x: 27, grad: "ledR", rim: "#9c1f17", pin: "D22", name: "Send" },
+    { x: 30, grad: "ledB", rim: "#1d4fb0", pin: "D21", name: "GPS fix" },
+    { x: 33, grad: "ledG", rim: "#1c8a40", pin: "D4", name: "Wi-Fi" },
+  ];
+  LEDS.forEach(l => {
+    const x = hx(l.x);
+    // resistor across the channel: e(x) to f(x)
+    el("line", { x1: x, x2: x, y1: hy("e"), y2: hy("f"), stroke: "#9aa1a8", "stroke-width": 1.6 }, parts);
+    el("rect", { x: x - 4.6, y: hy(8.35), width: 9.2, height: P * 1.5, rx: 4, fill: "#dcc38d", stroke: "#b49a63", "stroke-width": .8 }, parts);
+    [["#e8892b", 8.65], ["#e8892b", 8.95], ["#7a4a24", 9.25], ["#c9a23c", 9.65]].forEach(([c, r]) =>
+      el("rect", { x: x - 4.6, y: hy(r), width: 9.2, height: 2.6, fill: c }, parts));
+    // LED: anode d(x), cathode d(x+1), dome above
+    const cx = (hx(l.x) + hx(l.x + 1)) / 2, cy = hy(4.95);
+    el("polyline", { points: `${hx(l.x)},${hy("d")} ${hx(l.x)},${cy + 6} ${cx - 3},${cy}`, fill: "none", stroke: "#9aa1a8", "stroke-width": 1.6 }, parts);
+    el("polyline", { points: `${hx(l.x + 1)},${hy("d")} ${hx(l.x + 1)},${cy + 6} ${cx + 3},${cy}`, fill: "none", stroke: "#9aa1a8", "stroke-width": 1.6 }, parts);
+    el("circle", { cx, cy, r: 11.5, fill: l.rim, opacity: .35 }, parts);
+    el("circle", { cx, cy, r: 9.5, fill: `url(#${l.grad})`, stroke: l.rim, "stroke-width": 1 }, parts);
+    el("line", { x1: cx + 7.2, x2: cx + 7.2, y1: cy - 6.2, y2: cy + 6.2, stroke: l.rim, "stroke-width": 1.2 }, parts);
+    // callout tag above the board
+    const tg = el("g", {}, svg);
+    el("line", { x1: cx, x2: cx, y1: BY - 30, y2: BY - 4, stroke: "#8c9aa7", "stroke-width": 1, "stroke-dasharray": "2 2" }, tg);
+    el("rect", { x: cx - 25, y: BY - 66, width: 50, height: 36, rx: 5, fill: "#ffffff", stroke: "#c9d4de" }, tg);
+    el("text", { x: cx, y: BY - 51, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: "#22303c" }, tg, `${l.name}`);
+    el("text", { x: cx, y: BY - 38, "text-anchor": "middle", "font-size": 8.5, "font-family": "IBM Plex Mono, monospace", fill: "#6a7b8b" }, tg, l.pin);
+  });
+
+  /* ---------- ESP32 DevKit V1 (USB on the left, 3V3 side on row i) ---------- */
+  const esp = el("g", {}, svg);
+  const S = 9;
+  const ex1 = hx(S) - 4.2 * P, ex2 = hx(S + 14) + 1.9 * P, ey1 = hy(2.9), ey2 = hy(14.3), ecy = (ey1 + ey2) / 2;
+  el("rect", { x: ex1 + 3, y: ey1 + 4, width: ex2 - ex1, height: ey2 - ey1, rx: 4, fill: "rgba(20,30,40,.25)" }, esp);
+  el("rect", { x: ex1, y: ey1, width: ex2 - ex1, height: ey2 - ey1, rx: 4, fill: "#1e2836", stroke: "#0f151d" }, esp);
+  // module: shield can + antenna
+  const mx1 = hx(S + 5.4), mx2 = ex2 - 3, my1 = hy(5.15), my2 = hy(12.05);
+  el("rect", { x: mx1, y: my1, width: mx2 - mx1, height: my2 - my1, rx: 2, fill: "#24344a" }, esp);
+  el("rect", { x: mx1 + 3, y: my1 + 3, width: (mx2 - mx1) * 0.68, height: my2 - my1 - 6, rx: 2, fill: "url(#can)", stroke: "#8a939d", "stroke-width": .8 }, esp);
+  const canMid = mx1 + 3 + (mx2 - mx1) * 0.34;
+  el("text", { x: canMid, y: ecy - 6, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: "#3e4853" }, esp, "ESP-WROOM-32");
+  el("text", { x: canMid, y: ecy + 9, "text-anchor": "middle", "font-size": 7.5, "font-family": "IBM Plex Mono, monospace", fill: "#5c6670" }, esp, "Wi-Fi + BT · 4 MB");
+  const ax = mx1 + (mx2 - mx1) * 0.74, aw = (mx2 - mx1) * 0.22;
+  let zz = `M${ax} ${my1 + 10}`;
+  for (let k = 0; k < 6; k++) zz += ` h${aw} v${(my2 - my1 - 20) / 12} h${-aw} v${(my2 - my1 - 20) / 12}`;
+  el("path", { d: zz, fill: "none", stroke: "#c9a64b", "stroke-width": 1.6 }, esp);
+  // usb, buttons, regulator, leds
+  el("rect", { x: ex1 - 14, y: ecy - 12, width: 26, height: 24, rx: 2, fill: "#b9c0c8", stroke: "#7f8790" }, esp);
+  el("rect", { x: ex1 - 10, y: ecy - 6, width: 14, height: 12, rx: 1, fill: "#8d959e" }, esp);
+  [[ey1 + 22, "EN"], [ey2 - 22, "BOOT"]].forEach(([y, t]) => {
+    el("rect", { x: ex1 + 20, y: y - 7, width: 14, height: 14, rx: 2, fill: "#c9ced4" }, esp);
+    el("circle", { cx: ex1 + 27, cy: y, r: 4, fill: "#2a2f35" }, esp);
+    el("text", { x: ex1 + 42, y: y + 3, "font-size": 7, "font-family": "IBM Plex Mono, monospace", fill: "#c9d3dd" }, esp, t);
+  });
+  el("rect", { x: ex1 + 44, y: ecy - 10, width: 16, height: 20, rx: 1, fill: "#14181d" }, esp);
+  el("text", { x: ex1 + 52, y: ecy + 20, "text-anchor": "middle", "font-size": 6, "font-family": "IBM Plex Mono, monospace", fill: "#8c99a6" }, esp, "3V3 REG");
+  el("circle", { cx: ex1 + 70, cy: ey1 + 14, r: 2.6, fill: "#ff4a3d" }, esp);
+  el("text", { x: ex1 + 76, y: ey1 + 17, "font-size": 6.5, "font-family": "IBM Plex Mono, monospace", fill: "#c9d3dd" }, esp, "PWR");
+  el("text", { x: (ex1 + mx1) / 2 + 14, y: ecy - 2, "text-anchor": "middle", "font-size": 9, "font-weight": 700, fill: "#e8eef4", "letter-spacing": ".06em" }, esp, "ESP32");
+  el("text", { x: (ex1 + mx1) / 2 + 14, y: ecy + 10, "text-anchor": "middle", "font-size": 6.5, "font-family": "IBM Plex Mono, monospace", fill: "#a9b6c3" }, esp, "DEVKIT V1");
+  // header pins + silkscreen labels
+  const TOP = ["VIN", "GND", "D13", "D12", "D14", "D27", "D26", "D25", "D33", "D32", "D35", "D34", "VN", "VP", "EN"];
+  const BOT = ["3V3", "GND", "D15", "D2", "D4", "RX2", "TX2", "D5", "D18", "D19", "D21", "RX0", "TX0", "D22", "D23"];
+  const USED = new Set(["3V3", "GND", "D4", "D18", "D19", "D21", "D22"]);
+  for (let k = 0; k < 15; k++) {
+    const x = hx(S + k);
+    [[hy("a"), TOP[k], hy(4.42), false], [hy("i"), BOT[k], hy(12.95), true]].forEach(([y, t, ty, bottom]) => {
+      el("rect", { x: x - 4.5, y: y - 4.5, width: 9, height: 9, rx: 1, fill: "#2b2f34" }, esp);
+      el("rect", { x: x - 2, y: y - 2, width: 4, height: 4, fill: "#d6b452" }, esp);
+      const hot = bottom && USED.has(t);
+      el("text", { x, y: ty, "text-anchor": "middle", "font-size": 6.6, "font-family": "IBM Plex Mono, monospace",
+        "font-weight": hot ? 600 : 400, fill: hot ? "#ffe08a" : "#b5c2ce" }, esp, t);
+    });
+  }
+
+  /* ---------- GPS module (above the right side, header facing the board) ---------- */
+  const gps = el("g", {}, svg);
+  const gy = BY - 1.5 * P;
+  const gx1 = hx(39) - 3.4 * P, gx2 = hx(42) + 3.4 * P, gy1 = gy - 8.6 * P, gy2 = gy + 1.1 * P;
+  el("rect", { x: gx1 + 3, y: gy1 + 4, width: gx2 - gx1, height: gy2 - gy1, rx: 4, fill: "rgba(20,30,40,.22)" }, gps);
+  el("rect", { x: gx1, y: gy1, width: gx2 - gx1, height: gy2 - gy1, rx: 4, fill: "#1f56b3", stroke: "#123a80" }, gps);
+  [[gx1 + 9, gy1 + 9], [gx2 - 9, gy1 + 9], [gx1 + 9, gy2 - 9], [gx2 - 9, gy2 - 9]].forEach(([x, y]) =>
+    el("circle", { cx: x, cy: y, r: 4.5, fill: "#eaf0f5", stroke: "#c9a64b", "stroke-width": 1.4 }, gps));
+  ["VCC", "RX", "TX", "GND"].forEach((t, k) => {
+    const x = hx(39 + k);
+    el("rect", { x: x - 4.5, y: gy - 4.5, width: 9, height: 9, rx: 1, fill: "#2b2f34" }, gps);
+    el("rect", { x: x - 2, y: gy - 2, width: 4, height: 4, fill: "#d6b452" }, gps);
+    el("text", { x, y: gy - 10, "text-anchor": "middle", "font-size": 7, "font-weight": 600, "font-family": "IBM Plex Mono, monospace", fill: "#ffffff" }, gps, t);
+  });
+  const cxg = (gx1 + gx2) / 2;
+  el("text", { x: cxg, y: gy1 + 18, "text-anchor": "middle", "font-size": 7.5, "font-family": "IBM Plex Mono, monospace", fill: "#d5e3ff" }, gps, "GY-NEO6MV2");
+  el("rect", { x: cxg - 30, y: gy1 + 30, width: 60, height: 52, rx: 3, fill: "url(#can)", stroke: "#7f8790" }, gps);
+  el("text", { x: cxg, y: gy1 + 50, "text-anchor": "middle", "font-size": 8.5, "font-weight": 700, fill: "#3e4853" }, gps, "u-blox");
+  el("text", { x: cxg, y: gy1 + 63, "text-anchor": "middle", "font-size": 7.5, "font-family": "IBM Plex Mono, monospace", fill: "#4e5862" }, gps, "NEO-6M/M8N");
+  el("circle", { cx: gx2 - 26, cy: gy1 + 104, r: 11, fill: "#c3c9d0", stroke: "#8a939d" }, gps);
+  el("text", { x: gx2 - 26, y: gy1 + 107, "text-anchor": "middle", "font-size": 6, "font-family": "IBM Plex Mono, monospace", fill: "#4e5862" }, gps, "BAT");
+  el("circle", { cx: gx1 + 30, cy: gy1 + 100, r: 3.2, fill: "#58ff7a", stroke: "#1c8a40" }, gps);
+  el("text", { x: gx1 + 30, y: gy1 + 113, "text-anchor": "middle", "font-size": 6, "font-family": "IBM Plex Mono, monospace", fill: "#d5e3ff" }, gps, "PPS");
+  el("circle", { cx: gx1 + 16, cy: gy1 + 56, r: 4.5, fill: "#d6b452", stroke: "#9b7d2a" }, gps);
+  // antenna on its cable, to the left of the module
+  const aS = 84, ax1 = gx1 - 44 - aS, ay1 = 24;
+  el("path", { d: `M${gx1 + 16} ${gy1 + 56} C ${gx1 - 24} ${gy1 + 56}, ${ax1 + aS + 30} ${ay1 + aS / 2}, ${ax1 + aS} ${ay1 + aS / 2}`, fill: "none", stroke: "#2a2f35", "stroke-width": 2 }, gps);
+  el("rect", { x: ax1 + 3, y: ay1 + 4, width: aS, height: aS, rx: 6, fill: "rgba(20,30,40,.2)" }, gps);
+  el("rect", { x: ax1, y: ay1, width: aS, height: aS, rx: 6, fill: "#cfc3a3", stroke: "#a6977a" }, gps);
+  el("rect", { x: ax1 + 17, y: ay1 + 17, width: aS - 34, height: aS - 34, rx: 3, fill: "#d9dde2", stroke: "#a9b0b8" }, gps);
+  el("circle", { cx: ax1 + aS / 2 + 8, cy: ay1 + aS / 2 + 3, r: 3, fill: "#c9a64b" }, gps);
+  el("text", { x: ax1 + aS / 2, y: ay1 + aS + 17, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: "#22303c" }, gps, "Ceramic antenna");
+  el("text", { x: ax1 + aS / 2, y: ay1 + aS + 30, "text-anchor": "middle", "font-size": 9, fill: "#6a7b8b" }, gps, "face up, toward the sky");
+  el("text", { x: gx2 + 12, y: gy1 + 40, "font-size": 12, "font-weight": 700, fill: "#22303c" }, gps, "GPS module");
+  el("text", { x: gx2 + 12, y: gy1 + 55, "font-size": 9, fill: "#6a7b8b" }, gps, "9600 baud");
+  el("text", { x: gx2 + 12, y: gy1 + 68, "font-size": 9, fill: "#6a7b8b" }, gps, "runs on 3.3 V");
+
+  /* ---------- power bank + laptop ---------- */
+  const pw = el("g", {}, svg);
+  const pbx = 26, pby = ecy - 115, pbw = 120, pbh = 230;
+  el("rect", { x: pbx + 4, y: pby + 5, width: pbw, height: pbh, rx: 16, fill: "rgba(20,30,40,.22)" }, pw);
+  el("rect", { x: pbx, y: pby, width: pbw, height: pbh, rx: 16, fill: "url(#bank)", stroke: "#1b2229" }, pw);
+  el("rect", { x: pbx + pbw - 6, y: ecy - 26, width: 10, height: 18, rx: 2, fill: "#9aa3ad" }, pw);
+  [0, 1, 2, 3].forEach(k => el("circle", { cx: pbx + 38 + k * 15, cy: pby + pbh - 30, r: 3.4, fill: k < 3 ? "#5fe3ff" : "#4a5663" }, pw));
+  el("text", { x: pbx + pbw / 2, y: pby + 48, "text-anchor": "middle", "font-size": 12.5, "font-weight": 700, fill: "#eef3f7" }, pw, "Power bank");
+  el("text", { x: pbx + pbw / 2, y: pby + 64, "text-anchor": "middle", "font-size": 8.5, "font-family": "IBM Plex Mono, monospace", fill: "#aab7c4" }, pw, "5 V USB out");
+  el("text", { x: pbx + pbw / 2, y: pby + pbh - 46, "text-anchor": "middle", "font-size": 7.5, "font-family": "IBM Plex Mono, monospace", fill: "#aab7c4" }, pw, "charge level");
+
+  const lp = el("g", {}, svg);
+  const lx = 30, ly = 40;
+  el("rect", { x: lx + 14, y: ly, width: 132, height: 80, rx: 5, fill: "#2b3540", stroke: "#1b2229" }, lp);
+  el("rect", { x: lx + 20, y: ly + 6, width: 120, height: 66, rx: 2, fill: "#dfe9f3" }, lp);
+  el("path", { d: `M${lx} ${ly + 84} h160 l-10 10 h-140 z`, fill: "#9aa6b2", stroke: "#6e7a86" }, lp);
+  el("text", { x: lx + 80, y: ly + 34, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: "#22303c" }, lp, "Laptop");
+  el("text", { x: lx + 80, y: ly + 48, "text-anchor": "middle", "font-size": 8, "font-family": "IBM Plex Mono, monospace", fill: "#4e5d6b" }, lp, "ArmoryDB :8000");
+  el("text", { x: lx + 80, y: ly + 62, "text-anchor": "middle", "font-size": 7.5, fill: "#4e5d6b" }, lp, "same Wi-Fi / phone hotspot");
+  // radio link from the module antenna, routed above the LED tags
+  const rx0 = ax + aw / 2, ry0 = ey1 - 4;
+  el("path", { d: `M${rx0} ${ry0 - 26} V100 Q${rx0} 84 ${rx0 - 16} 84 H${lx + 148}`, fill: "none", stroke: "#1f6fd1", "stroke-width": 1.6, "stroke-dasharray": "5 5" }, lp);
+  [10, 17, 24].forEach(r => el("path", { d: `M${rx0 - r * .7} ${ry0 - r * .7 - 2} A ${r} ${r} 0 0 1 ${rx0 + r * .7} ${ry0 - r * .7 - 2}`, fill: "none", stroke: "#1f6fd1", "stroke-width": 1.6, opacity: .8 }, lp));
+  const pillX = (rx0 + lx + 148) / 2;
+  el("rect", { x: pillX - 86, y: 96, width: 172, height: 20, rx: 10, fill: "#ffffff", stroke: "#c9d4de" }, lp);
+  el("text", { x: pillX, y: 110, "text-anchor": "middle", "font-size": 9, "font-family": "IBM Plex Mono, monospace", fill: "#1f6fd1" }, lp, "Wi-Fi · position every 30 s");
+
+  /* ---------- wires ---------- */
+  const W = {
+    red: ["#e5372c", "#9c1f17"], black: ["#3a3d42", "#111316"], orange: ["#f18a22", "#a95a0c"],
+    purple: ["#8b5cf6", "#5631b8"], white: ["#f7f7f4", "#8f969d"], blue: ["#2f6fde", "#1a4699"],
+    green: ["#2fae55", "#1b7536"], usb: ["#2b2f35", "#0d0f12"],
+  };
+  const X = c => hx(c), Y = r => hy(r);
+  const WIRES = [
+    { id: "pw3", group: "Power", color: "red", from: "ESP32 3V3", to: "Top + rail", why: "3.3 V on the top rail, for the GPS module.",
+      pts: [[X(9), Y("j")], [X(9), Y("l1")], [X(3), Y("l1")], [X(3), Y("Tp")]] },
+    { id: "pwg", group: "Power", color: "black", from: "ESP32 GND", to: "Top − rail", why: "Ground on the top rail, shared by the GPS and the LEDs.",
+      pts: [[X(10), Y("j")], [X(10), Y("l2")], [X(1), Y("l2")], [X(1), Y("Tm")]] },
+    { id: "usb", group: "Power", color: "usb", from: "Power bank USB", to: "ESP32 micro-USB", why: "5 V in; the board makes its own 3.3 V.", usb: true,
+      pts: null },
+    { id: "gv", group: "GPS module", color: "red", from: "GPS VCC", to: "Top + rail", why: "Powers the GPS at 3.3 V. Never 5 V.",
+      pts: [[X(39), gy], [X(39), Y("Tp")]] },
+    { id: "gg", group: "GPS module", color: "black", from: "GPS GND", to: "Top − rail", why: "GPS ground.",
+      pts: [[X(42), gy], [X(42), Y("Tm")]] },
+    { id: "gt", group: "GPS module", color: "orange", from: "GPS TX", to: "ESP32 D18", why: "Position data into the ESP32 (GPS_RX_PIN 18).",
+      pts: [[X(41), gy], [X(41), Y("l4")], [X(17), Y("l4")], [X(17), Y("j")]] },
+    { id: "gr", group: "GPS module", color: "purple", from: "GPS RX", to: "ESP32 D19", why: "Settings from the ESP32 to the GPS (GPS_TX_PIN 19).",
+      pts: [[X(40), gy], [X(40), Y("l3")], [X(18), Y("l3")], [X(18), Y("j")]] },
+    { id: "lr", group: "Status lights", color: "white", from: "ESP32 D22", to: "330 Ω → red LED +", why: "Send light: one flash per position sent, three quick flashes if the laptop rejected it.",
+      pts: [[X(22), Y("j")], [X(22), Y("l1")], [X(27), Y("l1")], [X(27), Y("j")]] },
+    { id: "lb", group: "Status lights", color: "blue", from: "ESP32 D21", to: "330 Ω → blue LED +", why: "GPS fix light: on while the GPS has a usable position.",
+      pts: [[X(19), Y("j")], [X(19), Y("l2")], [X(30), Y("l2")], [X(30), Y("j")]] },
+    { id: "lg", group: "Status lights", color: "green", from: "ESP32 D4", to: "330 Ω → green LED +", why: "Wi-Fi light: on while connected, fast blinking in setup mode.",
+      pts: [[X(13), Y("j")], [X(13), Y("l5")], [X(33), Y("l5")], [X(33), Y("j")]] },
+    { id: "lk", group: "Status lights", color: "black", from: "LED − legs (×3)", to: "Top − rail", why: "Each LED's short leg goes to ground.",
+      multi: [[[X(28), Y("a")], [X(28), Y("Tm")]], [[X(31), Y("a")], [X(31), Y("Tm")]], [[X(34), Y("a")], [X(34), Y("Tm")]]] },
+  ];
+
+  const wiresG = el("g", {}, svg);
+  const pathOf = pts => "M" + pts.map(p => p.join(" ")).join(" L");
+  WIRES.forEach(w => {
+    const [core, edge] = W[w.color];
+    const g = el("g", { class: w.usb ? "usb" : "wire", "data-id": w.id, tabindex: 0, role: "button",
+      "aria-label": `${w.from} to ${w.to}. ${w.why}` }, wiresG);
+    if (w.usb) {
+      const d = `M${pbx + pbw + 4} ${ecy - 17} C ${pbx + pbw + 40} ${ecy - 17}, ${ex1 - 50} ${ecy}, ${ex1 - 14} ${ecy}`;
+      el("path", { d, fill: "none", stroke: "transparent", "stroke-width": 16 }, g);
+      el("path", { d, fill: "none", stroke: edge, "stroke-width": 9, "stroke-linecap": "round" }, g);
+      el("path", { d, fill: "none", stroke: core, "stroke-width": 6.5, "stroke-linecap": "round" }, g);
+      el("rect", { x: ex1 - 30, y: ecy - 8, width: 18, height: 16, rx: 2, fill: "#2b2f35" }, g);
+      el("rect", { x: pbx + pbw + 2, y: ecy - 25, width: 14, height: 16, rx: 2, fill: "#2b2f35" }, g);
+      el("text", { x: pbx + pbw + 8, y: ecy + 18, "text-anchor": "start", "font-size": 8.5, "font-family": "IBM Plex Mono, monospace", fill: "#6a7b8b" }, g, "micro-USB");
+      return;
+    }
+    (w.multi || [w.pts]).forEach(pts => {
+      const d = pathOf(pts);
+      el("path", { d, fill: "none", stroke: "transparent", "stroke-width": 14, "stroke-linejoin": "round" }, g);
+      el("path", { d, fill: "none", stroke: edge, "stroke-width": 6.2, "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+      el("path", { d, fill: "none", stroke: core, "stroke-width": 4.2, "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+      el("path", { d, fill: "none", stroke: "#ffffff", "stroke-opacity": .28, "stroke-width": 1.2, "stroke-linejoin": "round", transform: "translate(-.8 -.8)" }, g);
+      [pts[0], pts[pts.length - 1]].forEach(([x, y]) => el("rect", { x: x - 3.6, y: y - 3.6, width: 7.2, height: 7.2, rx: 1.2, fill: edge }, g));
+    });
+  });
+
+  // board labels
+  el("text", { x: BX + BOARD_W - 30, y: BY + BOARD_H + 18, "text-anchor": "end", "font-size": 9, "font-family": "IBM Plex Mono, monospace", fill: "#6a7b8b" }, svg, "breadboard · 47 columns shown");
+  el("text", { x: BX + 30, y: BY + BOARD_H + 18, "text-anchor": "start", "font-size": 9, "font-family": "IBM Plex Mono, monospace", fill: "#6a7b8b" }, svg, "ESP32 straddles the centre gap");
+
+  document.getElementById("view-board").appendChild(svg);
+
+  /* ---------- schematic ---------- */
+  document.getElementById("view-schem").innerHTML = `
+  <svg viewBox="0 0 1170 640" role="img" aria-label="Schematic of the ESP32 GPS tracker" style="min-width:820px">
+    <rect width="1170" height="640" fill="#f7f9fb"/>
+    <g font-family="IBM Plex Mono, monospace" fill="#22303c" stroke="none">
+      <!-- power bank -->
+      <g class="usb" data-id="usb" tabindex="0" role="button" aria-label="Power bank to ESP32 USB">
+        <rect x="70" y="190" width="150" height="150" rx="10" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
+        <g stroke="#22303c" stroke-width="2.5"><line x1="125" y1="240" x2="165" y2="240"/><line x1="133" y1="252" x2="157" y2="252" stroke-width="5"/><line x1="125" y1="264" x2="165" y2="264"/><line x1="133" y1="276" x2="157" y2="276" stroke-width="5"/></g>
+        <text x="145" y="215" text-anchor="middle" font-size="13" font-weight="600" font-family="Archivo, sans-serif">Power bank</text>
+        <text x="145" y="315" text-anchor="middle" font-size="11" fill="#6a7b8b">5 V USB</text>
+        <polyline points="220,230 360,230" fill="none" stroke="#e5372c" stroke-width="2.5"/>
+        <polyline points="220,300 290,300 290,560" fill="none" stroke="#22303c" stroke-width="2.5"/>
+        <text x="290" y="222" text-anchor="middle" font-size="11" fill="#6a7b8b">micro-USB</text>
+      </g>
+      <!-- ESP32 -->
+      <rect x="360" y="120" width="230" height="400" rx="8" fill="#1e2836"/>
+      <text x="475" y="300" text-anchor="middle" font-size="17" font-weight="700" fill="#e8eef4" font-family="Archivo, sans-serif">ESP32</text>
+      <text x="475" y="320" text-anchor="middle" font-size="11" fill="#a9b6c3">DevKit V1 · WROOM-32</text>
+      <g font-size="12" fill="#ffe08a">
+        <text x="372" y="234">5V (USB)</text><text x="372" y="304">GND</text>
+        <text x="578" y="164" text-anchor="end">3V3</text><text x="578" y="204" text-anchor="end">GND</text>
+        <text x="578" y="254" text-anchor="end">D18 · RX</text><text x="578" y="294" text-anchor="end">D19 · TX</text>
+        <text x="578" y="364" text-anchor="end">D4</text><text x="578" y="414" text-anchor="end">D21</text><text x="578" y="464" text-anchor="end">D22</text>
+      </g>
+      <!-- GPS -->
+      <rect x="820" y="120" width="190" height="200" rx="8" fill="#1f56b3"/>
+      <text x="935" y="215" text-anchor="middle" font-size="15" font-weight="700" fill="#ffffff" font-family="Archivo, sans-serif">GPS</text>
+      <text x="935" y="234" text-anchor="middle" font-size="11" fill="#d5e3ff">NEO-6M / M8N</text>
+      <g font-size="12" fill="#ffffff"><text x="832" y="164">VCC</text><text x="832" y="204">GND</text><text x="832" y="254">TX</text><text x="832" y="294">RX</text></g>
+      <rect x="1050" y="180" width="70" height="70" rx="6" fill="#cfc3a3" stroke="#a6977a"/>
+      <text x="1085" y="270" text-anchor="middle" font-size="10" fill="#6a7b8b">antenna</text>
+      <line x1="1010" y1="215" x2="1050" y2="215" stroke="#22303c" stroke-width="1.5" stroke-dasharray="3 3"/>
+    </g>
+    <g fill="none" stroke-width="2.5" stroke-linecap="round">
+      <g class="wire" data-id="gv"><path d="M590 160 H820" stroke="transparent" stroke-width="14"/><path d="M590 160 H820" stroke="#e5372c"/></g>
+      <g class="wire" data-id="gg"><path d="M590 200 H820" stroke="transparent" stroke-width="14"/><path d="M590 200 H820" stroke="#22303c"/></g>
+      <g class="wire" data-id="gt"><path d="M820 250 H590" stroke="transparent" stroke-width="14"/><path d="M820 250 H590" stroke="#f18a22"/></g>
+      <g class="wire" data-id="gr"><path d="M590 290 H820" stroke="transparent" stroke-width="14"/><path d="M590 290 H820" stroke="#8b5cf6"/></g>
+      <path d="M360 300 H290" stroke="#22303c"/>
+    </g>
+    <g font-family="IBM Plex Mono, monospace" font-size="11" fill="#6a7b8b">
+      <text x="705" y="153" text-anchor="middle">3.3 V</text>
+      <text x="705" y="243" text-anchor="middle">GPS TX → ESP32 RX</text>
+      <text x="705" y="283" text-anchor="middle">ESP32 TX → GPS RX</text>
+    </g>
+    ${[["lg", 360, "#2fae55", "#3ddc6b", "Green · Wi-Fi"], ["lb", 410, "#2f6fde", "#3b82f6", "Blue · GPS fix"], ["lr", 460, "#8f969d", "#ff4136", "Red · Send"]].map(([id, y, wire, fill, label]) => `
+    <g class="wire" data-id="${id}">
+      <path d="M590 ${y} H650 M710 ${y} H760 M792 ${y} H900" fill="none" stroke="transparent" stroke-width="14"/>
+      <path d="M590 ${y} H650 l4 -8 l8 16 l8 -16 l8 16 l8 -16 l8 16 l6 -8 H760" fill="none" stroke="${wire}" stroke-width="2.5" stroke-linejoin="round"/>
+      <path d="M760 ${y - 12} L760 ${y + 12} L784 ${y} Z" fill="${fill}" stroke="#22303c" stroke-width="2" stroke-linejoin="round"/>
+      <line x1="786" y1="${y - 12}" x2="786" y2="${y + 12}" stroke="#22303c" stroke-width="2.5"/>
+      <path d="M786 ${y} H900" fill="none" stroke="#22303c" stroke-width="2.5"/>
+      <path d="M770 ${y - 16} l8 -10 m-6 0 h6 v6 M780 ${y - 14} l8 -10 m-6 0 h6 v6" fill="none" stroke="#22303c" stroke-width="1.5"/>
+      <text x="680" y="${y + 24}" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="#6a7b8b">330 Ω</text>
+      <text x="930" y="${y + 4}" font-family="Archivo, sans-serif" font-size="12" font-weight="600" fill="#22303c">${label}</text>
+    </g>`).join("")}
+    <g class="wire" data-id="lk" fill="none" stroke="#22303c" stroke-width="2.5">
+      <path d="M900 360 V560" stroke="transparent" stroke-width="14"/><path d="M900 360 V560"/>
+    </g>
+    <g stroke="#22303c" stroke-width="2.5" fill="none">
+      <path d="M590 200 H612 V560"/>
+      <path d="M290 560 H900"/>
+      <path d="M560 560 v14 M544 574 h32 M550 582 h20 M556 590 h8"/>
+    </g>
+    <text x="580" y="612" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" fill="#6a7b8b">common ground</text>
+  </svg>`;
+
+  /* ---------- connections list ---------- */
+  const conns = document.getElementById("conns");
+  let lastGroup = "";
+  WIRES.forEach(w => {
+    if (w.group !== lastGroup) {
+      lastGroup = w.group;
+      const t = document.createElement("div"); t.className = "group-title"; t.textContent = w.group; conns.appendChild(t);
+    }
+    const row = document.createElement("div");
+    row.className = "conn"; row.tabIndex = 0; row.dataset.id = w.id;
+    row.innerHTML = `<span class="sw" style="background:${W[w.color][0]}"></span>
+      <span class="pin">${w.from} → ${w.to}</span><span class="why">${w.why}</span>`;
+    conns.appendChild(row);
+  });
+
+  /* ---------- interaction ---------- */
+  const byId = Object.fromEntries(WIRES.map(w => [w.id, w]));
+  const canvas = document.getElementById("canvas"), tip = document.getElementById("tip");
+  let pinned = null;
+  function focus(id, evt) {
+    document.querySelectorAll(".canvas svg").forEach(s => s.classList.toggle("focus", !!id));
+    document.querySelectorAll("[data-id]").forEach(n => n.classList.toggle("on", n.dataset.id === id));
+    if (!id) { tip.hidden = true; return; }
+    const w = byId[id];
+    tip.innerHTML = `<b>${w.from} → ${w.to}</b>${w.why}`;
+    tip.hidden = false;
+    const box = canvas.getBoundingClientRect();
+    let x, y;
+    if (evt && evt.clientX != null) { x = evt.clientX - box.left + canvas.scrollLeft + 14; y = evt.clientY - box.top + 14; }
+    else {
+      const target = document.querySelector(`.canvas svg:not([hidden]) [data-id="${id}"]`) ||
+        document.querySelector(`#${viewBoard.hidden ? "view-schem" : "view-board"} [data-id="${id}"]`);
+      const r = target ? target.getBoundingClientRect() : box;
+      x = r.left - box.left + canvas.scrollLeft + r.width / 2; y = r.top - box.top + r.height / 2;
+    }
+    const maxX = canvas.scrollLeft + canvas.clientWidth - tip.offsetWidth - 8;
+    tip.style.left = Math.max(canvas.scrollLeft + 8, Math.min(x, maxX)) + "px";
+    tip.style.top = Math.min(y, canvas.clientHeight - tip.offsetHeight - 8) + "px";
+  }
+  const viewBoard = document.getElementById("view-board"), viewSchem = document.getElementById("view-schem");
+  document.querySelectorAll(".canvas [data-id]").forEach(n => {
+    n.addEventListener("mousemove", e => { if (!pinned) focus(n.dataset.id, e); });
+    n.addEventListener("mouseleave", () => { if (!pinned) focus(null); });
+    n.addEventListener("click", e => { e.stopPropagation(); pinned = pinned === n.dataset.id ? null : n.dataset.id; focus(pinned, e); });
+    n.addEventListener("focus", () => focus(n.dataset.id));
+    n.addEventListener("blur", () => { if (!pinned) focus(null); });
+  });
+  canvas.addEventListener("click", () => { pinned = null; focus(null); });
+  document.querySelectorAll(".conn").forEach(r => {
+    r.addEventListener("mouseenter", () => { if (!pinned) focus(r.dataset.id); });
+    r.addEventListener("mouseleave", () => { if (!pinned) focus(null); });
+    r.addEventListener("click", () => { pinned = pinned === r.dataset.id ? null : r.dataset.id; focus(pinned); });
+    r.addEventListener("focus", () => focus(r.dataset.id));
+    r.addEventListener("blur", () => { if (!pinned) focus(null); });
+  });
+
+  const tabs = { board: document.getElementById("tab-board"), schem: document.getElementById("tab-schem") };
+  function show(which) {
+    pinned = null; focus(null);
+    viewBoard.hidden = which !== "board"; viewSchem.hidden = which !== "schem";
+    tabs.board.setAttribute("aria-selected", which === "board"); tabs.schem.setAttribute("aria-selected", which === "schem");
+    try { localStorage.setItem("tracker-view", which); } catch (e) {}
+  }
+  tabs.board.addEventListener("click", () => show("board"));
+  tabs.schem.addEventListener("click", () => show("schem"));
+  try { if (localStorage.getItem("tracker-view") === "schem") show("schem"); } catch (e) {}
+})();
+</script>
+</body>
+</html>
