@@ -11,7 +11,7 @@ export interface QrCameraOption {
 /** What a page reports back after handling a scanned code, so the camera view can show it. */
 export interface ScanFeedback {
   status: "success" | "duplicate" | "error";
-  /** Short text shown inside the camera view, e.g. "PA-PI-001 · M1911A1 Pistol". */
+  /** Short text shown inside the camera view, e.g. "PA-M16-001 · M16A1". */
   label?: string;
 }
 

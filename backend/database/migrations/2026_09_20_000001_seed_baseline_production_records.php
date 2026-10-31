@@ -223,8 +223,6 @@ return new class extends Migration
                     ['serial' => 'PA-M4-002', 'model' => 'M4 Carbine',     'manufacturer' => 'Colt',           'caliber' => '5.56 NATO', 'condition' => FirearmEquipment::CONDITION_GOOD,      'cost' => 65000.00],
                     ['serial' => 'PA-M16-001','model' => 'M16A1',          'manufacturer' => 'Elisco',         'caliber' => '5.56 NATO', 'condition' => FirearmEquipment::CONDITION_GOOD,      'cost' => 48000.00],
                     ['serial' => 'PA-M16-002','model' => 'M16A2',          'manufacturer' => 'FN Herstal',     'caliber' => '5.56 NATO', 'condition' => FirearmEquipment::CONDITION_FAIR,      'cost' => 52000.00],
-                    ['serial' => 'PA-PI-001', 'model' => 'M1911A1 Pistol', 'manufacturer' => 'Armscor',        'caliber' => '.45 ACP',   'condition' => FirearmEquipment::CONDITION_EXCELLENT,'cost' => 35000.00],
-                    ['serial' => 'PA-PI-002', 'model' => 'Glock 17',       'manufacturer' => 'Glock',          'caliber' => '9x19mm',    'condition' => FirearmEquipment::CONDITION_GOOD,      'cost' => 42000.00],
                     ['serial' => 'PA-SG-001', 'model' => 'Mossberg 500',   'manufacturer' => 'Mossberg',       'caliber' => '12 Gauge',  'condition' => FirearmEquipment::CONDITION_GOOD,      'cost' => 28000.00],
                     ['serial' => 'PA-MG-001', 'model' => 'M60 GPMG',       'manufacturer' => 'U.S. Ordnance',  'caliber' => '7.62 NATO', 'condition' => FirearmEquipment::CONDITION_FAIR,      'cost' => 180000.00],
                 ];
