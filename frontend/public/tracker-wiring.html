@@ -115,7 +115,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   <header>
     <div class="eyebrow">ArmoryDB · ESP32 GPS tracker</div>
     <h1>Armory Tracker Wiring</h1>
-    <p class="lede">The tracker as it is built now: an ESP32 DevKit and a GPS module on a breadboard, three status lights, and a power bank on the USB port. Pins match the tracker's firmware settings.</p>
+    <p class="lede">The tracker as it is built now: an ESP32 DevKit and a GPS module on a breadboard, three status lights, and a 21700 battery feeding the USB port through a charger and a 5 V boost board. Two resistors let the tracker measure its own battery. Pins match the tracker's firmware settings.</p>
   </header>
 
   <div class="editor">
@@ -147,8 +147,13 @@ code { font-family: var(--font-mono); font-size: .92em; }
           <li><span class="qty">3×</span><span>5 mm LED: green, blue, red</span></li>
           <li><span class="qty">3×</span><span>330 Ω resistor (orange, orange, brown)</span></li>
           <li><span class="qty">1×</span><span>Breadboard</span></li>
-          <li><span class="qty">12×</span><span>Jumper wires (male-to-male; male-to-female for the GPS)</span></li>
-          <li><span class="qty">1×</span><span>Power bank and micro-USB data cable</span></li>
+          <li><span class="qty">16×</span><span>Jumper wires (male-to-male; male-to-female for the GPS)</span></li>
+          <li><span class="qty">1×</span><span>21700 Li-ion battery, 3.7 V 5,000 mAh, in a holder</span></li>
+          <li><span class="qty">1×</span><span>TP4056 charger board with protection</span></li>
+          <li><span class="qty">1×</span><span>Slide switch (on/off)</span></li>
+          <li><span class="qty">1×</span><span>5 V boost board with USB output</span></li>
+          <li><span class="qty">2×</span><span>100 kΩ resistor (brown, black, yellow)</span></li>
+          <li><span class="qty">1×</span><span>Short USB to micro-USB data cable</span></li>
         </ul>
       </section>
       <section class="card">
@@ -160,9 +165,12 @@ code { font-family: var(--font-mono); font-size: .92em; }
           <li>Each LED's long leg (+) faces the resistor; the short leg (−) goes to ground.</li>
           <li>Pin order is the common 30-pin DevKit V1. If your board differs, go by the labels printed next to each pin.</li>
           <li>Keep the ceramic antenna facing the sky.</li>
+          <li>Set the boost board to 5.0 V with a multimeter before plugging in the ESP32.</li>
+          <li>Charge through the TP4056's USB-C port. Turn the switch off while charging.</li>
+          <li>D34 is on the pin row the breadboard covers, so solder its wire to the pin (or use the perfboard build). Then set <code>HAS_BATTERY_MONITOR 1</code> and upload again; the system warns at 20% and 10%.</li>
         </ul>
         <div class="group-title" style="margin-top:16px">In the firmware, not wired yet</div>
-        <div class="later"><span>Buzzer · D23</span><span>Tamper switch · D27</span><span>Battery monitor · D34</span><span>LCD · D21/D22</span></div>
+        <div class="later"><span>Buzzer · D23</span><span>Tamper switch · D27</span><span>LCD · D21/D22</span></div>
       </section>
     </div>
   </div>
@@ -197,7 +205,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
     <radialGradient id="ledB" cx=".35" cy=".35" r=".75"><stop offset="0" stop-color="#e0ecff"/><stop offset=".45" stop-color="#3b82f6"/><stop offset="1" stop-color="#1d4fb0"/></radialGradient>
     <radialGradient id="ledR" cx=".35" cy=".35" r=".75"><stop offset="0" stop-color="#ffe3e0"/><stop offset=".45" stop-color="#ff4136"/><stop offset="1" stop-color="#ad1a12"/></radialGradient>
     <linearGradient id="can" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#e3e7ec"/><stop offset="1" stop-color="#aab2bc"/></linearGradient>
-    <linearGradient id="bank" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#2d3742"/><stop offset=".5" stop-color="#3b4754"/><stop offset="1" stop-color="#2a333d"/></linearGradient>`;
+    <linearGradient id="cell" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4fb97c"/><stop offset=".5" stop-color="#2f8f5b"/><stop offset="1" stop-color="#1f6b43"/></linearGradient>`;
   el("rect", { x: 0, y: 0, width: 1170, height: 680, fill: "#eaf0f5" }, svg);
   el("rect", { x: 0, y: 0, width: 1170, height: 680, fill: "url(#grid)" }, svg);
 
@@ -294,7 +302,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
     [[hy("a"), TOP[k], hy(4.42), false], [hy("i"), BOT[k], hy(12.95), true]].forEach(([y, t, ty, bottom]) => {
       el("rect", { x: x - 4.5, y: y - 4.5, width: 9, height: 9, rx: 1, fill: "#2b2f34" }, esp);
       el("rect", { x: x - 2, y: y - 2, width: 4, height: 4, fill: "#d6b452" }, esp);
-      const hot = bottom && USED.has(t);
+      const hot = bottom ? USED.has(t) : t === "D34";
       el("text", { x, y: ty, "text-anchor": "middle", "font-size": 6.6, "font-family": "IBM Plex Mono, monospace",
         "font-weight": hot ? 600 : 400, fill: hot ? "#ffe08a" : "#b5c2ce" }, esp, t);
     });
@@ -337,16 +345,54 @@ code { font-family: var(--font-mono); font-size: .92em; }
   el("text", { x: gx2 + 12, y: gy1 + 55, "font-size": 9, fill: "#6a7b8b" }, gps, "9600 baud");
   el("text", { x: gx2 + 12, y: gy1 + 68, "font-size": 9, fill: "#6a7b8b" }, gps, "runs on 3.3 V");
 
-  /* ---------- power bank + laptop ---------- */
+  /* ---------- 21700 battery -> TP4056 charger -> switch -> 5 V boost -> USB (left of the board) ---------- */
   const pw = el("g", {}, svg);
-  const pbx = 26, pby = ecy - 115, pbw = 120, pbh = 230;
-  el("rect", { x: pbx + 4, y: pby + 5, width: pbw, height: pbh, rx: 16, fill: "rgba(20,30,40,.22)" }, pw);
-  el("rect", { x: pbx, y: pby, width: pbw, height: pbh, rx: 16, fill: "url(#bank)", stroke: "#1b2229" }, pw);
-  el("rect", { x: pbx + pbw - 6, y: ecy - 26, width: 10, height: 18, rx: 2, fill: "#9aa3ad" }, pw);
-  [0, 1, 2, 3].forEach(k => el("circle", { cx: pbx + 38 + k * 15, cy: pby + pbh - 30, r: 3.4, fill: k < 3 ? "#5fe3ff" : "#4a5663" }, pw));
-  el("text", { x: pbx + pbw / 2, y: pby + 48, "text-anchor": "middle", "font-size": 12.5, "font-weight": 700, fill: "#eef3f7" }, pw, "Power bank");
-  el("text", { x: pbx + pbw / 2, y: pby + 64, "text-anchor": "middle", "font-size": 8.5, "font-family": "IBM Plex Mono, monospace", fill: "#aab7c4" }, pw, "5 V USB out");
-  el("text", { x: pbx + pbw / 2, y: pby + pbh - 46, "text-anchor": "middle", "font-size": 7.5, "font-family": "IBM Plex Mono, monospace", fill: "#aab7c4" }, pw, "charge level");
+  const mono = "IBM Plex Mono, monospace";
+  const pad = (x, y, t, ty) => {
+    el("rect", { x: x - 4.5, y: y - 4.5, width: 9, height: 9, rx: 1.5, fill: "#d6b452", stroke: "#9b7d2a" }, pw);
+    el("text", { x, y: ty, "text-anchor": "middle", "font-size": 6.5, "font-family": mono, fill: "#ffffff" }, pw, t);
+  };
+  // battery holder: + on the right, - on the left
+  el("rect", { x: 23, y: 154, width: 180, height: 44, rx: 6, fill: "rgba(20,30,40,.22)" }, pw);
+  el("rect", { x: 20, y: 150, width: 180, height: 44, rx: 6, fill: "#1b2026", stroke: "#0d1013" }, pw);
+  el("rect", { x: 30, y: 156, width: 156, height: 32, rx: 7, fill: "url(#cell)", stroke: "#1d5a3a" }, pw);
+  el("rect", { x: 186, y: 165, width: 8, height: 14, rx: 2, fill: "#c9ced4" }, pw);
+  el("text", { x: 108, y: 170, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: "#ffffff" }, pw, "21700 Li-ion");
+  el("text", { x: 108, y: 182, "text-anchor": "middle", "font-size": 7.5, "font-family": mono, fill: "#d8f1e2" }, pw, "3.7 V · 5000 mAh");
+  el("text", { x: 40, y: 176, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: "#ffffff" }, pw, "−");
+  el("text", { x: 177, y: 176, "text-anchor": "middle", "font-size": 11, "font-weight": 700, fill: "#ffffff" }, pw, "+");
+  // TP4056 charger with protection
+  el("rect", { x: 33, y: 226, width: 120, height: 64, rx: 4, fill: "rgba(20,30,40,.22)" }, pw);
+  el("rect", { x: 30, y: 222, width: 120, height: 64, rx: 4, fill: "#2557a8", stroke: "#163a75" }, pw);
+  el("rect", { x: 22, y: 244, width: 15, height: 20, rx: 3, fill: "#b9c0c8", stroke: "#7f8790" }, pw);
+  el("text", { x: 60, y: 252, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: "#ffffff" }, pw, "TP4056");
+  el("text", { x: 60, y: 263, "text-anchor": "middle", "font-size": 6.5, "font-family": mono, fill: "#cfe0ff" }, pw, "charger");
+  el("circle", { cx: 52, cy: 276, r: 2.6, fill: "#ff4a3d" }, pw);
+  el("circle", { cx: 62, cy: 276, r: 2.6, fill: "#3b82f6" }, pw);
+  pad(90, 230, "B−", 243); pad(130, 230, "B+", 243); pad(90, 278, "OUT−", 269); pad(130, 278, "OUT+", 269);
+  el("text", { x: 22, y: 302, "font-size": 7.5, "font-family": mono, fill: "#6a7b8b" }, pw, "USB-C: charge");
+  // on/off switch in the + line
+  el("rect", { x: 118, y: 312, width: 24, height: 22, rx: 3, fill: "#2b2f35" }, pw);
+  el("rect", { x: 121, y: 316, width: 9, height: 14, rx: 1.5, fill: "#c9ced4" }, pw);
+  // 5 V boost with a USB-A output
+  el("rect", { x: 33, y: 404, width: 120, height: 80, rx: 4, fill: "rgba(20,30,40,.22)" }, pw);
+  el("rect", { x: 30, y: 400, width: 120, height: 80, rx: 4, fill: "#1e6b5c", stroke: "#114238" }, pw);
+  pad(90, 408, "IN−", 421); pad(130, 408, "IN+", 421);
+  el("rect", { x: 142, y: 433, width: 30, height: 24, rx: 2, fill: "#c9ced4", stroke: "#7f8790" }, pw);
+  el("rect", { x: 150, y: 439, width: 20, height: 12, rx: 1, fill: "#8d959e" }, pw);
+  el("text", { x: 72, y: 450, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: "#ffffff" }, pw, "5 V boost");
+  el("text", { x: 72, y: 462, "text-anchor": "middle", "font-size": 6.5, "font-family": mono, fill: "#cdeee6" }, pw, "USB out");
+  el("circle", { cx: 50, cy: 470, r: 2.6, fill: "#ff4a3d" }, pw);
+  // battery level divider: Battery+ -> 100k -> D34 -> 100k -> GND
+  el("line", { x1: 186, x2: 186, y1: 212, y2: 326, stroke: "#9aa1a8", "stroke-width": 1.6 }, pw);
+  [232, 290].forEach(y0 => {
+    el("rect", { x: 181.4, y: y0, width: 9.2, height: 26, rx: 4, fill: "#dcc38d", stroke: "#b49a63", "stroke-width": .8 }, pw);
+    [["#7a4a24", 5], ["#2a2a2a", 9], ["#e8c42b", 13], ["#c9a23c", 19]].forEach(([c, d]) =>
+      el("rect", { x: 181.4, y: y0 + d, width: 9.2, height: 2.6, fill: c }, pw));
+  });
+  el("circle", { cx: 186, cy: 276, r: 3, fill: "#22303c" }, pw);
+  el("text", { x: 195, y: 249, "font-size": 7.5, "font-family": mono, fill: "#6a7b8b" }, pw, "100k");
+  el("text", { x: 176, y: 307, "text-anchor": "end", "font-size": 7.5, "font-family": mono, fill: "#6a7b8b" }, pw, "100k");
 
   const lp = el("g", {}, svg);
   const lx = 30, ly = 40;
@@ -368,7 +414,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   const W = {
     red: ["#e5372c", "#9c1f17"], black: ["#3a3d42", "#111316"], orange: ["#f18a22", "#a95a0c"],
     purple: ["#8b5cf6", "#5631b8"], white: ["#f7f7f4", "#8f969d"], blue: ["#2f6fde", "#1a4699"],
-    green: ["#2fae55", "#1b7536"], usb: ["#2b2f35", "#0d0f12"],
+    green: ["#2fae55", "#1b7536"], yellow: ["#f2c230", "#a7811a"], usb: ["#2b2f35", "#0d0f12"],
   };
   const X = c => hx(c), Y = r => hy(r);
   const WIRES = [
@@ -376,8 +422,20 @@ code { font-family: var(--font-mono); font-size: .92em; }
       pts: [[X(9), Y("j")], [X(9), Y("l1")], [X(3), Y("l1")], [X(3), Y("Tp")]] },
     { id: "pwg", group: "Power", color: "black", from: "ESP32 GND", to: "Top − rail", why: "Ground on the top rail, shared by the GPS and the LEDs.",
       pts: [[X(10), Y("j")], [X(10), Y("l2")], [X(1), Y("l2")], [X(1), Y("Tm")]] },
-    { id: "usb", group: "Power", color: "usb", from: "Power bank USB", to: "ESP32 micro-USB", why: "5 V in; the board makes its own 3.3 V.", usb: true,
+    { id: "bp", group: "Battery", color: "red", from: "Battery +", to: "TP4056 B+", why: "The 21700 cell into the charger board. Its protection cuts the power before the cell is over-discharged.",
+      pts: [[200, 172], [204, 172], [204, 212], [130, 212], [130, 230]] },
+    { id: "bn", group: "Battery", color: "black", from: "Battery −", to: "TP4056 B−", why: "Battery negative.",
+      pts: [[20, 172], [12, 172], [12, 212], [90, 212], [90, 230]] },
+    { id: "so", group: "Battery", color: "red", from: "TP4056 OUT+", to: "Switch → boost IN+", why: "The on/off switch sits in the + line. The boost board raises 3.7 V to 5 V.",
+      multi: [[[130, 278], [130, 312]], [[130, 334], [130, 408]]] },
+    { id: "sg", group: "Battery", color: "black", from: "TP4056 OUT−", to: "Boost IN−", why: "Ground from the charger to the boost board.",
+      pts: [[90, 278], [90, 408]] },
+    { id: "usb", group: "Battery", color: "usb", from: "Boost USB 5 V", to: "ESP32 micro-USB", why: "5 V in; the board makes its own 3.3 V. Set the boost to 5.0 V before plugging in.", usb: true,
       pts: null },
+    { id: "bs", group: "Battery level", color: "yellow", from: "Battery + → 100 kΩ", to: "ESP32 D34", why: "Half the battery voltage reaches D34, so the tracker reports its battery level. Set HAS_BATTERY_MONITOR 1.",
+      multi: [[[186, 212], [186, 226]], [[186, 276], [582, 276], [582, hy("a")]]] },
+    { id: "bg", group: "Battery level", color: "black", from: "D34 → 100 kΩ", to: "Top − rail", why: "The second 100 kΩ to ground halves the voltage: a full 4.2 V cell shows 2.1 V at D34.",
+      pts: [[186, 326], [240, 326]] },
     { id: "gv", group: "GPS module", color: "red", from: "GPS VCC", to: "Top + rail", why: "Powers the GPS at 3.3 V. Never 5 V.",
       pts: [[X(39), gy], [X(39), Y("Tp")]] },
     { id: "gg", group: "GPS module", color: "black", from: "GPS GND", to: "Top − rail", why: "GPS ground.",
@@ -403,13 +461,13 @@ code { font-family: var(--font-mono); font-size: .92em; }
     const g = el("g", { class: w.usb ? "usb" : "wire", "data-id": w.id, tabindex: 0, role: "button",
       "aria-label": `${w.from} to ${w.to}. ${w.why}` }, wiresG);
     if (w.usb) {
-      const d = `M${pbx + pbw + 4} ${ecy - 17} C ${pbx + pbw + 40} ${ecy - 17}, ${ex1 - 50} ${ecy}, ${ex1 - 14} ${ecy}`;
+      const d = `M186 445 C 220 445, ${ex1 - 60} ${ecy}, ${ex1 - 14} ${ecy}`;
       el("path", { d, fill: "none", stroke: "transparent", "stroke-width": 16 }, g);
       el("path", { d, fill: "none", stroke: edge, "stroke-width": 9, "stroke-linecap": "round" }, g);
       el("path", { d, fill: "none", stroke: core, "stroke-width": 6.5, "stroke-linecap": "round" }, g);
       el("rect", { x: ex1 - 30, y: ecy - 8, width: 18, height: 16, rx: 2, fill: "#2b2f35" }, g);
-      el("rect", { x: pbx + pbw + 2, y: ecy - 25, width: 14, height: 16, rx: 2, fill: "#2b2f35" }, g);
-      el("text", { x: pbx + pbw + 8, y: ecy + 18, "text-anchor": "start", "font-size": 8.5, "font-family": "IBM Plex Mono, monospace", fill: "#6a7b8b" }, g, "micro-USB");
+      el("rect", { x: 170, y: 437, width: 16, height: 16, rx: 2, fill: "#2b2f35" }, g);
+      el("text", { x: 190, y: 472, "text-anchor": "start", "font-size": 8.5, "font-family": "IBM Plex Mono, monospace", fill: "#6a7b8b" }, g, "USB");
       return;
     }
     (w.multi || [w.pts]).forEach(pts => {
@@ -433,22 +491,28 @@ code { font-family: var(--font-mono); font-size: .92em; }
   <svg viewBox="0 0 1170 640" role="img" aria-label="Schematic of the ESP32 GPS tracker" style="min-width:820px">
     <rect width="1170" height="640" fill="#f7f9fb"/>
     <g font-family="IBM Plex Mono, monospace" fill="#22303c" stroke="none">
-      <!-- power bank -->
-      <g class="usb" data-id="usb" tabindex="0" role="button" aria-label="Power bank to ESP32 USB">
-        <rect x="70" y="190" width="150" height="150" rx="10" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
-        <g stroke="#22303c" stroke-width="2.5"><line x1="125" y1="240" x2="165" y2="240"/><line x1="133" y1="252" x2="157" y2="252" stroke-width="5"/><line x1="125" y1="264" x2="165" y2="264"/><line x1="133" y1="276" x2="157" y2="276" stroke-width="5"/></g>
-        <text x="145" y="215" text-anchor="middle" font-size="13" font-weight="600" font-family="Archivo, sans-serif">Power bank</text>
-        <text x="145" y="315" text-anchor="middle" font-size="11" fill="#6a7b8b">5 V USB</text>
-        <polyline points="220,230 360,230" fill="none" stroke="#e5372c" stroke-width="2.5"/>
-        <polyline points="220,300 290,300 290,560" fill="none" stroke="#22303c" stroke-width="2.5"/>
-        <text x="290" y="222" text-anchor="middle" font-size="11" fill="#6a7b8b">micro-USB</text>
-      </g>
+      <!-- 21700 battery -> TP4056 -> switch -> 5 V boost -> ESP32 USB -->
+      <rect x="30" y="100" width="80" height="80" rx="8" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
+      <g stroke="#22303c"><line x1="62" y1="122" x2="62" y2="158" stroke-width="2.5"/><line x1="76" y1="130" x2="76" y2="150" stroke-width="6"/></g>
+      <text x="100" y="116" text-anchor="middle" font-size="12" font-weight="700">+</text>
+      <text x="100" y="172" text-anchor="middle" font-size="12" font-weight="700">−</text>
+      <text x="70" y="198" text-anchor="middle" font-size="12" font-weight="600" font-family="Archivo, sans-serif">21700 Li-ion</text>
+      <text x="70" y="212" text-anchor="middle" font-size="10" fill="#6a7b8b">3.7 V · 5000 mAh</text>
+      <rect x="150" y="100" width="120" height="80" rx="8" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
+      <text x="210" y="137" text-anchor="middle" font-size="13" font-weight="600" font-family="Archivo, sans-serif">TP4056</text>
+      <text x="210" y="153" text-anchor="middle" font-size="9" fill="#6a7b8b">charger, protection</text>
+      <g font-size="10" fill="#6a7b8b"><text x="130" y="113" text-anchor="middle">B+</text><text x="130" y="153" text-anchor="middle">B−</text>
+        <text x="176" y="194" text-anchor="end">OUT−</text><text x="246" y="194">OUT+</text>
+        <text x="176" y="374" text-anchor="end">IN−</text><text x="246" y="374">IN+</text></g>
+      <rect x="150" y="380" width="120" height="90" rx="8" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
+      <text x="210" y="420" text-anchor="middle" font-size="13" font-weight="600" font-family="Archivo, sans-serif">5 V boost</text>
+      <text x="210" y="436" text-anchor="middle" font-size="9" fill="#6a7b8b">USB out</text>
       <!-- ESP32 -->
       <rect x="360" y="120" width="230" height="400" rx="8" fill="#1e2836"/>
       <text x="475" y="300" text-anchor="middle" font-size="17" font-weight="700" fill="#e8eef4" font-family="Archivo, sans-serif">ESP32</text>
       <text x="475" y="320" text-anchor="middle" font-size="11" fill="#a9b6c3">DevKit V1 · WROOM-32</text>
       <g font-size="12" fill="#ffe08a">
-        <text x="372" y="234">5V (USB)</text><text x="372" y="304">GND</text>
+        <text x="372" y="284">D34</text><text x="372" y="374">GND</text><text x="372" y="434">5V (USB)</text>
         <text x="578" y="164" text-anchor="end">3V3</text><text x="578" y="204" text-anchor="end">GND</text>
         <text x="578" y="254" text-anchor="end">D18 · RX</text><text x="578" y="294" text-anchor="end">D19 · TX</text>
         <text x="578" y="364" text-anchor="end">D4</text><text x="578" y="414" text-anchor="end">D21</text><text x="578" y="464" text-anchor="end">D22</text>
@@ -467,7 +531,34 @@ code { font-family: var(--font-mono); font-size: .92em; }
       <g class="wire" data-id="gg"><path d="M590 200 H820" stroke="transparent" stroke-width="14"/><path d="M590 200 H820" stroke="#22303c"/></g>
       <g class="wire" data-id="gt"><path d="M820 250 H590" stroke="transparent" stroke-width="14"/><path d="M820 250 H590" stroke="#f18a22"/></g>
       <g class="wire" data-id="gr"><path d="M590 290 H820" stroke="transparent" stroke-width="14"/><path d="M590 290 H820" stroke="#8b5cf6"/></g>
-      <path d="M360 300 H290" stroke="#22303c"/>
+    </g>
+    <g fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <g class="wire" data-id="bp"><path d="M110 120 H150" stroke="transparent" stroke-width="14"/><path d="M110 120 H150" stroke="#e5372c"/></g>
+      <g class="wire" data-id="bn"><path d="M110 160 H150" stroke="transparent" stroke-width="14"/><path d="M110 160 H150" stroke="#22303c"/></g>
+      <g class="wire" data-id="so">
+        <path d="M240 180 V380" stroke="transparent" stroke-width="14"/>
+        <path d="M240 180 V225 M240 255 V380" stroke="#e5372c"/>
+        <path d="M240 225 L254 250" stroke="#22303c"/><circle cx="240" cy="255" r="3" fill="#22303c" stroke="none"/>
+        <text x="262" y="244" font-size="10" fill="#6a7b8b" stroke="none" font-family="IBM Plex Mono, monospace">on/off</text>
+      </g>
+      <g class="wire" data-id="sg"><path d="M180 180 V380" stroke="transparent" stroke-width="14"/><path d="M180 180 V380" stroke="#22303c"/></g>
+      <g class="usb" data-id="usb">
+        <path d="M270 430 H360 M270 460 H300 V560" stroke="transparent" stroke-width="14"/>
+        <path d="M270 430 H360" stroke="#e5372c"/><path d="M270 460 H300 V560" stroke="#22303c"/>
+        <text x="315" y="422" text-anchor="middle" font-size="10" fill="#6a7b8b" stroke="none" font-family="IBM Plex Mono, monospace">USB</text>
+      </g>
+      <g class="wire" data-id="bs">
+        <path d="M240 200 H320 V280 H360" stroke="transparent" stroke-width="14"/>
+        <path d="M240 200 H320 V210 l-8 4 l16 8 l-16 8 l16 8 l-16 8 l16 8 l-8 4 V280 H360" stroke="#d9a400"/>
+        <circle cx="240" cy="200" r="3.5" fill="#22303c" stroke="none"/>
+        <text x="334" y="238" font-size="10" fill="#6a7b8b" stroke="none" font-family="IBM Plex Mono, monospace">100k</text>
+      </g>
+      <g class="wire" data-id="bg">
+        <path d="M320 280 V370 H360" stroke="transparent" stroke-width="14"/>
+        <path d="M320 280 V295 l-8 4 l16 8 l-16 8 l16 8 l-16 8 l16 8 l-8 4 V370 H360" stroke="#22303c"/>
+        <circle cx="320" cy="280" r="3.5" fill="#22303c" stroke="none"/>
+        <text x="334" y="322" font-size="10" fill="#6a7b8b" stroke="none" font-family="IBM Plex Mono, monospace">100k</text>
+      </g>
     </g>
     <g font-family="IBM Plex Mono, monospace" font-size="11" fill="#6a7b8b">
       <text x="705" y="153" text-anchor="middle">3.3 V</text>

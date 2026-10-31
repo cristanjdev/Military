@@ -9,6 +9,7 @@ import Link from "next/link";
 import { ArrowRight, Crosshair, LocateFixed, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { fmtRelative, cn } from "@/lib/utils";
+import { TRIP_STAGE_LABEL, type TripStage } from "@/lib/trip";
 import { useMapMountKey } from "./use-map-mount-key";
 import { MapResizeObserver } from "./map-resize-observer";
 import { TILE_ATTRIBUTION, TILE_DARKEN_CLASS, TILE_MAX_ZOOM, TILE_URL } from "./tiles";
@@ -99,6 +100,11 @@ interface LiveItem {
   /** Zones the shown position falls in; empty means outside all of them. */
   zones?: string[];
   battery_pct?: number | null;
+  /** The trip to the assigned destination; null for issuances from before destinations. */
+  destination?: string | null;
+  trip_stage?: TripStage | null;
+  /** On a trip: in a zone that is neither camp nor destination, or out of camp after the return. */
+  needs_attention?: boolean;
   device_id?: string | null;
   iot_online: boolean;
   telemetry_source: "iot" | "stale" | "placeholder" | "missing";
@@ -382,9 +388,23 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
                         <span className="text-emerald-300 font-medium truncate text-right" title={item.zones.join(", ")}>
                           {item.zones.join(", ")}
                         </span>
+                      ) : item.destination && !item.needs_attention ? (
+                        <span className="text-steel-300 font-medium">Between zones</span>
                       ) : (
                         <span className="text-red-300 font-semibold">Outside all zones</span>
                       )}
+                    </div>
+                  )}
+
+                  {item.destination && (
+                    <div className="flex justify-between items-center gap-2">
+                      <span className="text-steel-400">Destination</span>
+                      <span className="text-steel-200 font-medium truncate text-right" title={item.destination}>
+                        {item.destination}
+                        {item.trip_stage && (
+                          <span className="block text-[10px] text-steel-400 font-normal">{TRIP_STAGE_LABEL[item.trip_stage]}</span>
+                        )}
+                      </span>
                     </div>
                   )}
 
@@ -559,7 +579,7 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
 function markerFor(item: LiveItem) {
   if (item.telemetry_source === "placeholder") return placeholderMarker;
   if (item.telemetry_source === "stale") return staleMarker;
-  if (item.status === "Overdue" || item.zones?.length === 0) return overdueMarker;
+  if (item.status === "Overdue" || (item.needs_attention ?? item.zones?.length === 0)) return overdueMarker;
   return tactical;
 }
 

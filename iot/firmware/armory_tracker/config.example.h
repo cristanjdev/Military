@@ -110,9 +110,10 @@
 #define SIM_NTP_PRIMARY "pool.ntp.org"
 #define SIM_NTP_SECONDARY "time.nist.gov"
 
-/* ---------- Optional battery monitor ----------
- * Leave 0 unless a resistor divider is actually wired to BATTERY_PIN,
- * otherwise the ADC reads noise and reports a meaningless percentage.
+/* ---------- Battery monitor (21700 battery build) ----------
+ * Set to 1 once the two 100k resistors are wired from Battery+ to BATTERY_PIN (GPIO34) and GND.
+ * The level then goes with every update, and the system alerts at 20% and 10%.
+ * Leave 0 on a USB or power bank build: an unwired pin reads noise and would raise false alerts.
  */
 #define HAS_BATTERY_MONITOR 0
 #define BATTERY_PIN 34

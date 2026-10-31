@@ -353,7 +353,7 @@ If you don't have the hardware yet, or want to test the software side first, use
 
 ### Test Procedure
 
-1. Power on the ESP32 (plug USB into power bank or computer)
+1. Power on the ESP32 (switch on the 21700 battery, or plug USB into the computer)
 2. Open Serial Monitor at 115200 baud
 3. Wait for WiFi connection (should take 2–5 seconds)
 4. Take the device **outdoors** or near a window
@@ -378,7 +378,8 @@ Serial Monitor:
 Dashboard:
 - Live GPS map shows the firearm's position
 - Position updates every 30 seconds
-- If you walk outside the geofence, a "Geofence Violation" alert triggers
+- On a trip to its assigned destination, leaving it before 90 minutes, entering another zone, or leaving
+  the camp again before the firearm is returned triggers a security alert with an alarm sound
 
 ---
 

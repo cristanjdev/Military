@@ -26,6 +26,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { alarmAudioBlocked, playAlarm, primeAlarmAudio } from "@/lib/alarm";
 import { cn, fmtRelative } from "@/lib/utils";
+import { TRIP_ALARM_TYPES } from "@/lib/trip";
 
 interface TopbarProps {
   onMenuClick?: () => void;
@@ -372,7 +373,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
 }
 
 /** Notification types that sound the alarm when they arrive. */
-const ALARM_TYPES = new Set(["geofence_violation"]);
+const ALARM_TYPES = new Set(["geofence_violation", ...TRIP_ALARM_TYPES]);
 
 /** Shows toast for new critical/warning notifications as they arrive via polling */
 function RealtimeAlertToast({ items }: { items?: any[] }) {
@@ -415,7 +416,7 @@ function RealtimeAlertToast({ items }: { items?: any[] }) {
             description: n.message,
             duration: 8000,
           });
-        } else if (n.type === "geofence_return") {
+        } else if (n.type === "geofence_return" || n.type === "trip_arrived" || n.type === "trip_returned") {
           toast.success(n.title, { description: n.message, duration: 8000 });
         }
       }

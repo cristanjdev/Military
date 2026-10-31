@@ -333,6 +333,16 @@ from the project folder.
      transaction with GPS tracking enabled (issue it on the Transactions
      page). Otherwise every position is refused and nothing shows on the map.
 
+  c) Issuing asks for a destination zone. The system then follows the trip:
+       - Leaving the camp, arriving at the destination, leaving it after
+         90 minutes and returning to camp: normal notifications.
+       - Leaving the destination before 90 minutes, entering any other zone,
+         or leaving the camp again before the firearm is returned: security
+         alert with the alarm sound.
+     The camp is every zone marked "Camp" or "Armory" on the Geofences page;
+     any other zone can be a destination. A move counts after two updates in
+     a row agree, so one drifting reading does not raise an alert.
+
 5.5  Tell the tracker which Wi-Fi and which laptop to use
   config.h is needed once for the first upload (it holds the secret and the
   firearm). After that, the Wi-Fi and the laptop address are easiest to
@@ -483,14 +493,14 @@ from the project folder.
       phone near the tracker and the laptop
   [ ] Laptop IP changed? Update it from a phone (5.11) - no reflash needed
   [ ] Laptop still on the hotspot - run ipconfig, same IP as API_URL
-  [ ] Tracker powered (USB to laptop, or a power bank), GPS antenna facing
-      open sky: no roof, no trees directly above
+  [ ] Tracker on (21700 battery charged full, or USB to the laptop), GPS
+      antenna facing open sky: no roof, no trees directly above
   [ ] Wait 1-3 minutes without moving it: green -> blue -> red flashes
   [ ] Open GPS Tracking: "1 LIVE", marker at your position (about 3-10 m)
 
-  Power bank tip: some power banks switch off when the current draw is low
-  (this board uses ~100 mA). If it turns off by itself, use the bank's
-  low-current mode or another bank.
+  Battery: with the battery level wired and HAS_BATTERY_MONITOR 1 in config.h,
+  the system warns "Low Battery" at 20% and "Battery Critical" at 10%.
+  Charging a flat 5,000 mAh battery on the TP4056 takes about 5-6 hours.
 
 
 --------------------------------------------------------------------------------

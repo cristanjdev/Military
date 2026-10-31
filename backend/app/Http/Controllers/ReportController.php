@@ -176,14 +176,19 @@ class ReportController extends Controller
                 'firearm'     => $a->equipment_id ? "#{$a->equipment_id}" : '—',
             ])->values();
 
-        // Also include geofence violation notifications
-        $geoViolations = \App\Models\Notification::where('type', 'geofence_violation')
+        // Also include geofence and trip security alerts. Each alert is stored once per recipient,
+        // so keep one row per alert.
+        $geoViolations = \App\Models\Notification::whereIn('type', [
+                'geofence_violation', 'premature_departure', 'off_route', 'camp_exit_after_return',
+            ])
             ->when($request->filled('from'), fn($q) => $q->where('created_at', '>=', $request->date('from')))
             ->when($request->filled('to'),   fn($q) => $q->where('created_at', '<=', $request->date('to')))
-            ->latest('created_at')->limit(500)->get()
+            ->latest('created_at')->limit(2000)->get()
+            ->unique(fn($n) => $n->type . '|' . $n->created_at->format('Y-m-d H:i:s') . '|' . $n->message)
+            ->take(500)
             ->map(fn($n) => [
                 'timestamp'   => $n->created_at->format('Y-m-d H:i:s'),
-                'type'        => 'geofence_violation',
+                'type'        => $n->type,
                 'user'        => '—',
                 'role'        => '—',
                 'description' => $n->message,

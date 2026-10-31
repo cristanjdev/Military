@@ -566,22 +566,37 @@ void runSetupPortal() {
 }
 
 #if HAS_BATTERY_MONITOR
-int readBatteryPct() {
-  long raw = 0;
-  for (int i = 0; i < 8; i++) raw += analogRead(BATTERY_PIN);
-  raw /= 8;
+/* Charge left in one Li-ion cell (the 21700) at the tracker's light load, from its voltage. The
+ * voltage stays flat through the middle and drops fast near empty, so a straight line from 3.3 V
+ * to 4.2 V would still say 20% when the cell is nearly flat and the low-battery alert would come
+ * too late. Approximate (about +/-10%), which is enough for the 20% and 10% alerts. */
+int liIonPct(float v) {
+  static const float volts[] = {3.30f, 3.50f, 3.60f, 3.65f, 3.70f, 3.75f, 3.80f, 3.85f, 3.92f, 4.00f, 4.10f, 4.20f};
+  static const int pcts[] = {0, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100};
+  if (v <= volts[0]) return 0;
+  for (int i = 1; i < 12; i++) {
+    if (v <= volts[i]) {
+      return pcts[i - 1] + (int) ((v - volts[i - 1]) / (volts[i] - volts[i - 1]) * (pcts[i] - pcts[i - 1]));
+    }
+  }
+  return 100;
+}
 
+int readBatteryPct() {
 #if SIMULATE_GPS
   /* Simulation: a potentiometer replaces the resistor divider, so map the raw
    * ADC reading straight onto 0-100%. Turning the knob then behaves like a
    * battery gauge. A real divider never spans the full ADC range this way. */
-  long pct = map(raw, 0, 4095, 0, 100);
+  long raw = 0;
+  for (int i = 0; i < 8; i++) raw += analogRead(BATTERY_PIN);
+  long pct = map(raw / 8, 0, 4095, 0, 100);
   return (int) constrain(pct, 0L, 100L);
 #else
-  float v = (raw / 4095.0f) * 3.3f * BATTERY_DIVIDER_RATIO;
-  if (v >= 4.20f) return 100;
-  if (v <= 3.30f) return 0;
-  return (int) ((v - 3.30f) / (4.20f - 3.30f) * 100.0f);
+  /* analogReadMilliVolts applies the chip's factory ADC calibration; the raw count alone can be
+   * off by a tenth of a volt, a large part of the battery's 0.9 V range. */
+  long mv = 0;
+  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(BATTERY_PIN);
+  return liIonPct((mv / 8) / 1000.0f * BATTERY_DIVIDER_RATIO);
 #endif
 }
 #endif
@@ -727,6 +742,9 @@ int sendStatus(const char* line) {
   doc["satellites_in_view"] = satellitesInView();
   doc["satellites_used"] = satellitesUsed();
   doc["rssi"] = WiFi.RSSI();
+#if HAS_BATTERY_MONITOR
+  doc["battery_pct"] = readBatteryPct(); /* so a tracker with no fix (indoors) still warns before it dies */
+#endif
   String body;
   serializeJson(doc, body);
 

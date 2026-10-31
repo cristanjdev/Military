@@ -20,6 +20,7 @@ import {
   TransactionStatus,
 } from "@/components/transactions/transaction-ledger";
 import { LocateFirearmModal } from "@/components/transactions/locate-firearm-modal";
+import { DestinationSelect } from "@/components/transactions/destination-select";
 
 const STATUS_FILTERS: Array<{
   value: "" | TransactionStatus;
@@ -451,6 +452,7 @@ function IssuanceModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
     expected_return_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16),
     purpose: 1,
     condition_on_issue: 2,
+    destination_location_id: "",
     notes: "",
   }));
   const [loading, setLoading] = useState(false);
@@ -481,6 +483,7 @@ function IssuanceModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
         ...form,
         equipment_id: Number(form.equipment_id),
         user_id: Number(form.user_id),
+        destination_location_id: Number(form.destination_location_id),
         ...(grant ? { biometric_grant: grant } : {}),
       });
       toast.success("Firearm issued — GPS tracking activated.");
@@ -514,7 +517,8 @@ function IssuanceModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
             </button>
           </div>
           <p className="text-xs text-steel-400">
-            GPS tracking and audit logging activate automatically after approval.
+            GPS tracking and audit logging activate automatically after approval. The firearm must stay at its
+            destination for 90 minutes, then go straight back to camp.
           </p>
 
           <div>
@@ -564,6 +568,18 @@ function IssuanceModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
                 {personnelQuery.isError && (
                   <p className="mt-1 text-xs text-red-300">Personnel options are unavailable for this account.</p>
                 )}
+              </div>
+
+              <div className="md:col-span-2">
+                <label htmlFor="issuance-destination" className="mb-1 block text-xs text-steel-400">
+                  Destination <span className="text-red-400">*</span>
+                </label>
+                <DestinationSelect
+                  id="issuance-destination"
+                  value={form.destination_location_id}
+                  disabled={loading}
+                  onChange={(value) => setForm({ ...form, destination_location_id: value })}
+                />
               </div>
             </div>
           </div>

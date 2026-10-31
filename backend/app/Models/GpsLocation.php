@@ -20,6 +20,7 @@ class GpsLocation extends Model
         'radius_meters',
         'polygon',
         'is_armory',
+        'is_camp',
     ];
 
     protected $casts = [
@@ -28,6 +29,7 @@ class GpsLocation extends Model
         'radius_meters'    => 'decimal:2',
         'polygon'          => 'array',
         'is_armory'        => 'boolean',
+        'is_camp'          => 'boolean',
         'security_level'   => 'integer',
     ];
 
@@ -55,6 +57,12 @@ class GpsLocation extends Model
         $a = sin($dLat / 2) ** 2 + cos($lat1) * cos($lat2) * sin($dLon / 2) ** 2;
         $c = 2 * atan2(sqrt($a), sqrt(1 - $a));
         return $earth * $c;
+    }
+
+    /** The camp a firearm leaves from and returns to: zones marked as camp, and the armory zones in it. */
+    public function isCamp(): bool
+    {
+        return $this->is_camp || $this->is_armory;
     }
 
     public function contains(float $lat, float $lon): bool

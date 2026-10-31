@@ -24,6 +24,8 @@ interface GpsLocation {
   center_longitude: number;
   radius_meters: number;
   is_armory: boolean;
+  /** Part of the camp: issued firearms leave from and return to it. Armory zones count as camp too. */
+  is_camp: boolean;
   description: string | null;
 }
 
@@ -46,11 +48,12 @@ export default function GeofencesPage() {
     longitude: "",
     radius_meters: 500,
     is_armory: false,
+    is_camp: false,
     description: "",
   });
 
   function resetForm() {
-    setForm({ location_name: "", latitude: "", longitude: "", radius_meters: 500, is_armory: false, description: "" });
+    setForm({ location_name: "", latitude: "", longitude: "", radius_meters: 500, is_armory: false, is_camp: false, description: "" });
     setEditing(null);
     setShowForm(false);
   }
@@ -62,6 +65,7 @@ export default function GeofencesPage() {
       longitude: String(loc.center_longitude),
       radius_meters: loc.radius_meters,
       is_armory: loc.is_armory,
+      is_camp: loc.is_camp,
       description: loc.description ?? "",
     });
     setEditing(loc);
@@ -76,6 +80,7 @@ export default function GeofencesPage() {
         center_longitude: parseFloat(form.longitude),
         radius_meters: form.radius_meters,
         is_armory: form.is_armory,
+        is_camp: form.is_camp,
         description: form.description || null,
         security_level: 1,
       };
@@ -87,6 +92,7 @@ export default function GeofencesPage() {
     onSuccess: () => {
       toast.success(editing ? "Geofence updated." : "Geofence created.");
       qc.invalidateQueries({ queryKey: ["geofences"] });
+      qc.invalidateQueries({ queryKey: ["locations"] });
       resetForm();
     },
     onError: (e: any) => toast.error(e.response?.data?.message ?? "Failed."),
@@ -98,6 +104,7 @@ export default function GeofencesPage() {
     onSuccess: () => {
       toast.success("Geofence deleted.");
       qc.invalidateQueries({ queryKey: ["geofences"] });
+      qc.invalidateQueries({ queryKey: ["locations"] });
     },
   });
 
@@ -109,7 +116,9 @@ export default function GeofencesPage() {
             <MapPin className="h-5 w-5 text-olive-300" /> Geofence Management
           </h1>
           <p className="text-sm text-steel-400">
-            Define authorized zones and see which zone each firearm is in. A firearm leaving all zones raises an alert with an alarm sound.
+            Define the camp and the destination zones, and see which zone each firearm is in. An issued firearm travels
+            from the camp to its destination, stays 90 minutes, and comes straight back; leaving early, entering another
+            zone, or leaving the camp again after the return raises an alert with an alarm sound.
           </p>
         </div>
         {canManage && (
@@ -133,7 +142,7 @@ export default function GeofencesPage() {
               {/* Zone Information */}
               <div>
                 <p className="text-[10px] uppercase tracking-widest text-olive-300 mb-1.5">Zone Information</p>
-                <div className="grid grid-cols-[7fr_3fr] gap-3">
+                <div className="grid grid-cols-[6fr_2fr_2fr] gap-3">
                   <div>
                     <label className="text-xs text-steel-400 mb-1 block">Zone Name</label>
                     <input className="input-field w-full" required placeholder="e.g. Main Armory"
@@ -141,24 +150,16 @@ export default function GeofencesPage() {
                   </div>
                   <div>
                     <label className="text-xs text-steel-400 mb-1 block">Type</label>
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, is_armory: !form.is_armory })}
-                      className={`w-full h-[42px] px-3 rounded-md border text-sm font-medium transition-colors duration-200 flex items-center justify-center gap-2 ${
-                        form.is_armory
-                          ? "bg-olive-600/30 border-olive-500 text-olive-100"
-                          : "bg-steel-900/60 border-steel-700/40 text-steel-400 hover:border-steel-600"
-                      }`}
-                    >
-                      <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-                        form.is_armory ? "bg-olive-500 border-olive-500" : "border-steel-500"
-                      }`}>
-                        {form.is_armory && <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
-                      </span>
-                      Armory
-                    </button>
+                    <TypeToggle label="Armory" on={form.is_armory} onClick={() => setForm({ ...form, is_armory: !form.is_armory })} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-steel-400 mb-1 block">&nbsp;</label>
+                    <TypeToggle label="Camp" on={form.is_camp} onClick={() => setForm({ ...form, is_camp: !form.is_camp })} />
                   </div>
                 </div>
+                <p className="mt-1.5 text-[11px] text-steel-500">
+                  Mark the camp area as Camp. Any zone that is not Camp or Armory can be chosen as a destination when issuing a firearm.
+                </p>
                 <div className="mt-2">
                   <label className="text-xs text-steel-400 mb-1 block">Description</label>
                   <input className="input-field w-full" placeholder="Optional description"
@@ -236,8 +237,8 @@ export default function GeofencesPage() {
                 </td>
                 <td className="text-center text-steel-200">{loc.radius_meters}m</td>
                 <td className="text-center">
-                  <span className={`pill ${loc.is_armory ? "pill-tactical" : "pill-muted"}`}>
-                    {loc.is_armory ? "Armory" : "Zone"}
+                  <span className={`pill ${loc.is_armory || loc.is_camp ? "pill-tactical" : "pill-muted"}`}>
+                    {loc.is_armory ? "Armory" : loc.is_camp ? "Camp" : "Destination"}
                   </span>
                 </td>
                 <td className="text-center text-xs text-steel-400 max-w-xs truncate">{loc.description ?? "—"}</td>
@@ -274,5 +275,26 @@ export default function GeofencesPage() {
         confirmLabel="Delete"
       />
     </div>
+  );
+}
+
+function TypeToggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`w-full h-[42px] px-3 rounded-md border text-sm font-medium transition-colors duration-200 flex items-center justify-center gap-2 ${
+        on
+          ? "bg-olive-600/30 border-olive-500 text-olive-100"
+          : "bg-steel-900/60 border-steel-700/40 text-steel-400 hover:border-steel-600"
+      }`}
+    >
+      <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
+        on ? "bg-olive-500 border-olive-500" : "border-steel-500"
+      }`}>
+        {on && <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+      </span>
+      {label}
+    </button>
   );
 }

@@ -56,6 +56,7 @@ class ClientRevisionTest extends TestCase
                 'expected_return_at' => now()->addHours(8)->toIso8601String(),
                 'purpose'            => $purpose,
                 'condition_on_issue' => 2,
+                'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
             ])->assertStatus(422)->assertJsonValidationErrors('purpose');
         }
     }

@@ -46,6 +46,7 @@ class TransactionTest extends TestCase
             'expected_return_at' => now()->addHours(8)->toIso8601String(),
             'purpose'            => 1,
             'condition_on_issue' => 2,
+            'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
         ]);
 
         $response->assertStatus(201)
@@ -68,6 +69,7 @@ class TransactionTest extends TestCase
             'expected_return_at' => now()->addHours(8)->toIso8601String(),
             'purpose'            => 1,
             'condition_on_issue' => 2,
+            'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
         ]);
 
         $response->assertStatus(409);
@@ -86,6 +88,7 @@ class TransactionTest extends TestCase
             'expected_return_at' => now()->addHours(8)->toIso8601String(),
             'purpose'            => 2,
             'condition_on_issue' => 1,
+            'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
         ]);
         $txId = $issueResp->json('transaction_id');
 
@@ -114,6 +117,7 @@ class TransactionTest extends TestCase
             'expected_return_at' => now()->addHours(8)->toIso8601String(),
             'purpose'            => 1,
             'condition_on_issue' => 2,
+            'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
         ]);
 
         $response->assertStatus(403);

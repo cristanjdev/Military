@@ -23,6 +23,13 @@ class Transaction extends Model
     public const PURPOSE_MAINTENANCE = 3;
     public const PURPOSE_INSPECTION  = 4;
 
+    /** Trip from camp to the assigned destination and back (TripMonitor). */
+    public const TRIP_AT_CAMP      = 'at_camp';
+    public const TRIP_OUTBOUND     = 'outbound';
+    public const TRIP_ON_SITE      = 'on_site';
+    public const TRIP_RETURNING    = 'returning';
+    public const TRIP_BACK_AT_CAMP = 'back_at_camp';
+
     protected $fillable = [
         'equipment_id',
         'user_id',
@@ -36,6 +43,10 @@ class Transaction extends Model
         'condition_on_return',
         'notes',
         'gps_tracking_enabled',
+        'destination_location_id',
+        'trip_stage',
+        'trip_place',
+        'destination_arrived_at',
     ];
 
     protected $casts = [
@@ -44,6 +55,7 @@ class Transaction extends Model
         'actual_return_at'     => 'datetime',
         'gps_tracking_enabled' => 'boolean',
         'purpose'              => 'integer',
+        'destination_arrived_at' => 'datetime',
     ];
 
     public function firearm(): BelongsTo
@@ -59,6 +71,11 @@ class Transaction extends Model
     public function authorizer(): BelongsTo
     {
         return $this->belongsTo(User::class, 'authorized_by', 'user_id');
+    }
+
+    public function destination(): BelongsTo
+    {
+        return $this->belongsTo(GpsLocation::class, 'destination_location_id', 'location_id');
     }
 
     public function gpsLogs(): HasMany

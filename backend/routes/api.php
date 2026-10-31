@@ -116,6 +116,10 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
             Route::post('transactions/sweep-overdue',[TransactionController::class, 'sweepOverdue']);
         });
 
+        // The issuance's destination: the Armory Custodian and the roles above it.
+        Route::patch('transactions/{id}/destination', [TransactionController::class, 'changeDestination'])
+            ->middleware('role:Administrator,Command Officer,Armory Custodian');
+
         Route::middleware('role:Administrator,Command Officer,S4 Officer,Armory Custodian,Personnel')->group(function () {
             Route::get('transactions',      [TransactionController::class, 'index']);
             Route::get('transactions/{id}', [TransactionController::class, 'show']);

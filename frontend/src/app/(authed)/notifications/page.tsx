@@ -19,13 +19,23 @@ const TYPE_LABELS: Record<string, string> = {
   signal_lost: "Signal Lost",
   signal_restored: "Signal Restored",
   iot_device_online: "Tracker Online",
+  trip_left_camp: "Left Camp",
+  trip_arrived: "Arrived at Destination",
+  trip_left_destination: "Left Destination",
+  trip_returned: "Returned to Camp",
+  premature_departure: "Premature Departure",
+  off_route: "Off-Route",
+  camp_exit_after_return: "Left Camp After Return",
+  battery_low: "Low Battery",
+  battery_critical: "Battery Critical",
 };
 
 /** Filter groups for the client's notification categories. */
 const GROUPS: { key: string; label: string; types?: string[] }[] = [
   { key: "all", label: "All" },
   { key: "account", label: "Sign-ins & Account", types: ["failed_login", "new_login", "account_change", "account_locked", "password_reset"] },
-  { key: "tracker", label: "GPS & IoT Tracker", types: ["signal_lost", "signal_restored", "iot_device_online", "geofence_violation", "geofence_return"] },
+  { key: "tracker", label: "GPS & IoT Tracker", types: ["signal_lost", "signal_restored", "iot_device_online", "geofence_violation", "geofence_return", "battery_low", "battery_critical"] },
+  { key: "trip", label: "Trips & Destinations", types: ["trip_left_camp", "trip_arrived", "trip_left_destination", "trip_returned", "premature_departure", "off_route", "camp_exit_after_return"] },
 ];
 
 function typeLabel(type: string): string {

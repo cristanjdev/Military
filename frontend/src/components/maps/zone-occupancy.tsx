@@ -18,6 +18,9 @@ interface LiveItem {
   captured_at?: string | null;
   telemetry_source: "iot" | "stale" | "placeholder" | "missing";
   zones?: string[];
+  /** On a trip: in a zone that is neither camp nor destination, or out of camp after the return. */
+  needs_attention?: boolean;
+  destination?: string | null;
 }
 
 interface LiveResponse {
@@ -27,7 +30,8 @@ interface LiveResponse {
 
 /**
  * Map of the authorized zones with every firearm that is out, and which zone each one is in.
- * Firearms outside all zones are listed first, in red.
+ * Firearms that need attention are listed first, in red. A firearm on its way to or from its
+ * destination is between zones, which is normal.
  */
 export function ZoneOccupancy() {
   const [focusId, setFocusId] = useState<number | undefined>(undefined);
@@ -40,7 +44,9 @@ export function ZoneOccupancy() {
 
   const items = data?.items ?? [];
   // A placeholder point is only the assigned zone's centre, so it says nothing about a breach.
-  const outside = items.filter((i) => i.telemetry_source !== "placeholder" && (i.zones?.length ?? 0) === 0);
+  const tracked = items.filter((i) => i.telemetry_source !== "placeholder");
+  const attention = tracked.filter((i) => i.needs_attention ?? (i.zones?.length ?? 0) === 0);
+  const betweenZones = tracked.filter((i) => (i.zones?.length ?? 0) === 0 && !attention.includes(i));
   const byZone = (data?.geofences ?? []).map((g) => ({
     zone: g.location_name,
     firearms: items.filter((i) => i.zones?.includes(g.location_name)),
@@ -84,16 +90,26 @@ export function ZoneOccupancy() {
 
       <div className="glass rounded-xl p-4 lg:col-span-4 max-h-[30rem] overflow-y-auto space-y-4">
         <div>
-          <p className={cn("section-title flex items-center gap-2", outside.length ? "text-red-300" : "")}>
-            {outside.length ? <AlertTriangle className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
-            Outside all zones ({outside.length})
+          <p className={cn("section-title flex items-center gap-2", attention.length ? "text-red-300" : "")}>
+            {attention.length ? <AlertTriangle className="h-4 w-4" /> : <ShieldCheck className="h-4 w-4" />}
+            Needs attention ({attention.length})
           </p>
-          {outside.length === 0 ? (
-            <p className="mt-1.5 text-xs text-steel-400">Every tracked firearm is inside an authorized zone.</p>
+          {attention.length === 0 ? (
+            <p className="mt-1.5 text-xs text-steel-400">Every tracked firearm is where it should be.</p>
           ) : (
-            <ul className="mt-2 space-y-1.5">{outside.map((i) => row(i, true))}</ul>
+            <ul className="mt-2 space-y-1.5">{attention.map((i) => row(i, true))}</ul>
           )}
         </div>
+
+        {betweenZones.length > 0 && (
+          <div>
+            <p className="text-[11px] font-semibold text-olive-200 flex items-center gap-1.5">
+              <LocateFixed className="h-3.5 w-3.5 text-olive-400" /> On the way, between zones
+              <span className="text-steel-500 font-normal">({betweenZones.length})</span>
+            </p>
+            <ul className="mt-1.5 space-y-1.5">{betweenZones.map((i) => row(i))}</ul>
+          </div>
+        )}
 
         {byZone.map(({ zone, firearms }) => (
           <div key={zone}>

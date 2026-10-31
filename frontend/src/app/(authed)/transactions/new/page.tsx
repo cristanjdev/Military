@@ -8,6 +8,7 @@ import { ArrowLeft, ShieldCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { confirmBiometric, isBiometricCancelled } from "@/store/biometric-confirm";
+import { DestinationSelect } from "@/components/transactions/destination-select";
 
 function NewIssuanceContent() {
   const router = useRouter();
@@ -20,6 +21,7 @@ function NewIssuanceContent() {
     expected_return_at: new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16),
     purpose: 1,
     condition_on_issue: 2,
+    destination_location_id: "",
     notes: "",
   });
   const [loading, setLoading] = useState(false);
@@ -49,6 +51,7 @@ function NewIssuanceContent() {
         ...form,
         equipment_id: Number(form.equipment_id),
         user_id: Number(form.user_id),
+        destination_location_id: Number(form.destination_location_id),
         ...(grant ? { biometric_grant: grant } : {}),
       });
       toast.success("Firearm issued — GPS tracking activated.");
@@ -74,7 +77,7 @@ function NewIssuanceContent() {
         <div>
 
           <h1 className="text-2xl font-bold text-olive-50">New Issuance</h1>
-          <p className="text-sm text-steel-400">After approval, GPS tracking and audit logging are activated automatically.</p>
+          <p className="text-sm text-steel-400">After approval, GPS tracking and audit logging are activated automatically. The firearm must stay at its destination for 90 minutes, then go straight back to camp.</p>
         </div>
 
         <div className="grid md:grid-cols-2 gap-4">
@@ -96,6 +99,10 @@ function NewIssuanceContent() {
                 <option key={u.user_id} value={u.user_id}>{u.rank} {u.first_name} {u.last_name}</option>
               ))}
             </select>
+          </Field>
+
+          <Field label="Destination" required>
+            <DestinationSelect value={form.destination_location_id} onChange={(v) => set("destination_location_id", v)} />
           </Field>
 
           <Field label="Expected Return" required>

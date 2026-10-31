@@ -55,35 +55,39 @@ B. Recommended defense/demo version
    - Insulates solder joints.
 
 10. Small on/off switch
-    - Useful for battery version.
+    - Turns the battery build on and off.
 
-11. USB power bank
-    - Easiest portable power for defense/demo.
+11. USB power bank (bench testing only)
+    - Handy while testing at the desk. The finished tracker runs on the
+      21700 battery below.
 
-C. Optional battery version
+C. Battery (the tracker's power source)
 
-12. 3.7V Li-Po battery
-    - Example: 1000 mAh to 2000 mAh.
+12. One rechargeable 21700 Li-ion battery, 3.7V, 5,000 mAh
+    - Estimated about 42 hours of continuous running per charge. Time a full
+      charge on the finished tracker before relying on that figure (section 6).
 
-13. TP4056 Li-Po charging module WITH protection
-    - Charges and protects the Li-Po battery.
+13. 21700 battery holder with wire leads
 
-14. 5V boost converter module
-    - Converts 3.7V battery output to stable 5V for ESP32 VIN/5V pin.
+14. TP4056 charging module WITH protection (USB-C or micro-USB)
+    - Charges and protects the battery. It charges at about 1 A, so a flat
+      5,000 mAh cell takes roughly 5 to 6 hours.
+
+15. 5V boost converter module
+    - Converts the 3.7V battery output to a stable 5V for the ESP32 VIN/5V pin.
+
+16. Two 100k ohm resistors for the battery reading
+    - Lets the tracker measure its own battery level (section 7).
 
 Important battery note:
-Do not connect a raw 3.7V Li-Po directly to the ESP32 VIN/5V pin and expect it
-to be stable. Most ESP32 DevKit VIN/5V pins expect around 5V. For beginners,
-use a USB power bank. If you need a Li-Po build, use:
+Do not connect the 3.7V battery directly to the ESP32 VIN/5V pin and expect it
+to be stable. Most ESP32 DevKit VIN/5V pins expect around 5V. Use:
 
-Li-Po battery -> TP4056 charger/protection -> 5V boost converter -> ESP32 5V/VIN
+21700 battery -> TP4056 charger/protection -> 5V boost converter -> ESP32 5V/VIN
 
-D. Optional monitoring/tamper parts
+D. Optional tamper part
 
-15. Two resistors for battery reading
-    - 100k ohm + 100k ohm recommended for low battery drain.
-
-16. Normally-open reed switch or push switch
+17. Normally-open reed switch or push switch
     - Optional tamper input for GPIO27.
 
 
@@ -309,21 +313,13 @@ Step 7: Open Arduino IDE Serial Monitor later at 115200 baud.
 
 
 ============================================================
-6. OPTIONAL BATTERY WIRING
+6. BATTERY WIRING (21700)
 ============================================================
 
-Recommended beginner portable option:
-Use a USB power bank plugged into the ESP32 USB port.
+The tracker runs on one 21700 Li-ion battery (3.7V, 5,000 mAh). While testing
+at the desk, a USB cable or power bank in the ESP32 USB port also works.
 
-This is the safest and easiest for defense/demo because:
-- No battery soldering needed.
-- Stable 5V power.
-- Easy to recharge.
-- Less chance of damaging ESP32.
-
-Advanced Li-Po option:
-
-Li-Po battery
+21700 battery (in its holder)
   -> TP4056 B+ and B-
   -> TP4056 OUT+ and OUT-
   -> 5V boost converter IN+ and IN-
@@ -335,24 +331,42 @@ Battery wiring table:
 +-----------------------+-----------------------+
 | From                  | To                    |
 +-----------------------+-----------------------+
-| Li-Po positive        | TP4056 B+             |
-| Li-Po negative        | TP4056 B-             |
+| Battery positive      | TP4056 B+             |
+| Battery negative      | TP4056 B-             |
 | TP4056 OUT+           | Boost IN+             |
 | TP4056 OUT-           | Boost IN-             |
 | Boost 5V OUT+         | ESP32 5V or VIN       |
 | Boost OUT-            | ESP32 GND             |
 +-----------------------+-----------------------+
 
+Optional on/off switch: put it in the wire from TP4056 OUT+ to Boost IN+.
+
 Important:
 - Use a TP4056 module WITH battery protection.
-- Do not short the Li-Po battery.
+- Set the boost converter to 5.0V with a multimeter BEFORE connecting the ESP32.
+- Do not short the battery.
 - Do not charge unattended.
 - Do not use a swollen or damaged battery.
 
+Runtime check (before quoting the 42-hour estimate):
+1. Charge the battery full (the TP4056 light turns from red to blue/green).
+2. Issue a firearm to the tracker and leave it running where it has Wi-Fi.
+3. Note when it starts. When the battery dies, the system shows
+   "Signal Lost" with the time and the last battery reading.
+4. The time between the two is the real runtime for that update interval.
+
 
 ============================================================
-7. OPTIONAL BATTERY PERCENTAGE WIRING
+7. BATTERY LEVEL WIRING (low-battery alerts)
 ============================================================
+
+The tracker measures its own battery and sends the level with every update.
+The system then alerts the armory staff:
+- "Low Battery" at 20%
+- "Battery Critical" at 10%
+Each alert is sent once per discharge, and again after the battery is
+recharged and runs down. If the battery still dies, "Signal Lost" follows
+about 2 minutes later.
 
 The firmware uses GPIO34 for battery reading.
 GPIO34 is input-only, which is good for analog reading.
@@ -385,6 +399,17 @@ All grounds must be connected together:
 - Battery/boost ground
 - ESP32 GND
 - GPS GND
+
+Then switch the reading on in config.h and upload again:
+
+#define HAS_BATTERY_MONITOR 1
+
+Leave it 0 while nothing is wired to GPIO34: an unconnected pin reads noise
+and would raise false low-battery alerts.
+
+The percentage is approximate (about +/-10%) because a Li-ion cell's voltage
+stays flat through the middle and drops quickly near empty. The firmware uses
+a Li-ion discharge table, so 20% and 10% are close to the real remaining charge.
 
 
 ============================================================
@@ -721,9 +746,9 @@ Recommended permanent build method:
    - ESP32 GPIO16 to GPS TX
    - ESP32 GPIO17 to GPS RX
 
-3. Add optional switch wiring if battery-powered.
+3. Add the on/off switch wiring for the battery.
 
-4. Add optional battery voltage divider if needed.
+4. Add the battery level resistors (section 7).
 
 5. Inspect all solder joints.
    - Good solder joint: shiny cone shape.
@@ -735,9 +760,9 @@ Recommended permanent build method:
    - Check each signal wire goes to the correct pin.
 
 7. Power with USB first.
-   - Do not test first power-up with Li-Po battery.
+   - Do not test first power-up on the battery.
 
-8. If USB test is successful, test battery/power bank.
+8. If the USB test is successful, test on the battery.
 
 
 ============================================================
@@ -778,7 +803,7 @@ One day before defense:
 [ ] Confirm API_URL in config.h uses that laptop IP.
 [ ] Confirm HMAC_SECRET matches backend .env, then run php artisan config:clear.
 [ ] Confirm equipment_id exists.
-[ ] Issue firearm in system so a transaction is Active or Overdue.
+[ ] Issue the firearm in the system (with a destination) so a transaction is Active.
 [ ] Confirm GPS tracking is enabled on that transaction.
 [ ] Log in with a staff account for the live map (Personnel gets 403).
 [ ] Test GPS outdoors.
@@ -789,7 +814,7 @@ One day before defense:
 [ ] Test fingerprint capture using Futronic sample/demo software.
 [ ] If no real scanner is available, prepare to explain the biometric flow as
     prototype/demo mode and show the admin toggle plus biometric login screen.
-[ ] Charge power bank or battery.
+[ ] Charge the 21700 battery full.
 [ ] Bring USB cable.
 [ ] Bring backup jumper wires.
 [ ] Bring biometric scanner USB cable if using real scanner.
@@ -916,7 +941,7 @@ ESP32 GND        -> GPS GND
 ESP32 GPIO16 RX2 -> GPS TX
 ESP32 GPIO17 TX2 -> GPS RX
 
-Optional battery percentage:
+Battery level (then HAS_BATTERY_MONITOR 1 in config.h):
 
 Battery+ -> 100k -> middle -> 100k -> GND
 middle -> ESP32 GPIO34

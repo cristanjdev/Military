@@ -9,6 +9,11 @@ return [
         'accuracy_meters'         => (int) env('ARMORY_GPS_ACCURACY_METERS', 10),
         'max_age_seconds'         => (int) env('ARMORY_GPS_MAX_AGE_SECONDS', 300),
         'future_tolerance_seconds'=> (int) env('ARMORY_GPS_FUTURE_TOLERANCE_SECONDS', 30),
+        // Minutes an issued firearm must stay at its assigned destination.
+        'destination_hold_minutes'=> (int) env('ARMORY_DESTINATION_HOLD_MINUTES', 90),
+        // Tracker battery levels (%) that raise a "Low Battery" and a "Battery Critical" alert.
+        'battery_low_pct'         => (int) env('ARMORY_BATTERY_LOW_PCT', 20),
+        'battery_critical_pct'    => (int) env('ARMORY_BATTERY_CRITICAL_PCT', 10),
     ],
 
     'session' => [

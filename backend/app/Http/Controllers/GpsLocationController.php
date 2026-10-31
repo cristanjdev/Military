@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\GpsLocation;
+use App\Models\Transaction;
 use App\Services\AuditLogger;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -24,6 +25,7 @@ class GpsLocationController extends Controller
             'center_longitude' => ['required', 'numeric', 'between:-180,180'],
             'radius_meters'    => ['required', 'numeric', 'min:1'],
             'is_armory'        => ['nullable', 'boolean'],
+            'is_camp'          => ['nullable', 'boolean'],
             'polygon'          => ['nullable', 'array'],
         ]);
 
@@ -43,6 +45,7 @@ class GpsLocationController extends Controller
             'center_longitude' => ['sometimes', 'numeric', 'between:-180,180'],
             'radius_meters'    => ['sometimes', 'numeric', 'min:1'],
             'is_armory'        => ['sometimes', 'boolean'],
+            'is_camp'          => ['sometimes', 'boolean'],
             'polygon'          => ['sometimes', 'nullable', 'array'],
         ]);
 
@@ -56,11 +59,19 @@ class GpsLocationController extends Controller
     public function destroy(Request $request, int $id): JsonResponse
     {
         $loc = GpsLocation::findOrFail($id);
+        $inUse = Transaction::where('destination_location_id', $loc->location_id)
+            ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
+            ->count();
+        if ($inUse > 0) {
+            return response()->json([
+                'message' => "{$loc->location_name} is the destination of {$inUse} issued firearm(s). Delete it after they are returned.",
+            ], 409);
+        }
         if ($refused = $this->confirmPassword($request, "delete geofence {$loc->location_name}")) {
             return $refused;
         }
         AuditLogger::log('config_change', "Deleted geofence {$loc->location_name}", $request->user(), request: $request,
-            metadata: ['deleted' => $loc->only(['location_id', 'location_name', 'center_latitude', 'center_longitude', 'radius_meters', 'security_level', 'is_armory'])]);
+            metadata: ['deleted' => $loc->only(['location_id', 'location_name', 'center_latitude', 'center_longitude', 'radius_meters', 'security_level', 'is_armory', 'is_camp'])]);
         $loc->delete();
         return response()->json(['message' => 'Deleted.']);
     }

@@ -100,12 +100,14 @@ class TrackerWatchdog
                 $lost++;
                 self::notify($tx->firearm, $tx, $latest->device_id, 'signal_lost', Notification::SEVERITY_WARNING, 'Signal Lost: Location Updates Stopped',
                     sprintf(
-                        'Tracker %s on %s stopped sending location updates. Last position %.5f, %.5f, %s.',
+                        'Tracker %s on %s stopped sending location updates. Last position %.5f, %.5f, %s.%s',
                         $latest->device_id,
                         $tx->firearm->serial_number,
                         $latest->latitude,
                         $latest->longitude,
                         $lastSeen ? $lastSeen->diffForHumans() : 'time unknown',
+                        // A flat battery is the likeliest cause when the last reading was already low.
+                        $latest->battery_pct !== null ? " Last battery reading {$latest->battery_pct}%." : '',
                     ),
                     ['lat' => $latest->latitude, 'lon' => $latest->longitude, 'last_seen_at' => $lastSeen?->toIso8601String()]);
             }

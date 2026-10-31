@@ -8,9 +8,11 @@ use App\Models\GpsLog;
 use App\Models\Notification;
 use App\Models\Transaction;
 use App\Services\AuditLogger;
+use App\Services\TrackerBattery;
 use App\Services\TrackerFirmware;
 use App\Services\TrackerLog;
 use App\Services\TrackerWatchdog;
+use App\Services\TripMonitor;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\JsonResponse;
@@ -83,7 +85,8 @@ class GpsController extends Controller
         $insideAny = false;
         $insideArmory = false;
         $zoneNames = [];
-        foreach (GpsLocation::all() as $location) {
+        $zones = GpsLocation::all();
+        foreach ($zones as $location) {
             if ($location->contains((float) $data['latitude'], (float) $data['longitude'])) {
                 $insideAny = true;
                 $zoneNames[] = $location->location_name;
@@ -100,6 +103,7 @@ class GpsController extends Controller
                 $insideAny,
                 $insideArmory,
                 $zoneNames,
+                $zones,
                 $signatureHeader,
                 $request
             ) {
@@ -159,10 +163,18 @@ class GpsController extends Controller
                 ]);
 
                 TrackerWatchdog::seen($data['device_id'], $firearm, $activeTransaction);
+                TrackerBattery::check($activeTransaction, $firearm, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null, $data['device_id']);
 
-                $enteredUnsafeState = ! $insideAny
+                // An issuance with an assigned destination follows the trip rules (TripMonitor);
+                // one without (issued before destinations existed) alerts on leaving every zone.
+                $hasTrip = (bool) $activeTransaction->destination_location_id;
+                if ($hasTrip) {
+                    TripMonitor::track($activeTransaction, $firearm, $log, $zones);
+                }
+
+                $enteredUnsafeState = ! $hasTrip && ! $insideAny
                     && (! $previousEquipmentLog || $previousEquipmentLog->is_inside_geofence === true);
-                $cameBackInside = $insideAny
+                $cameBackInside = ! $hasTrip && $insideAny
                     && $previousEquipmentLog && $previousEquipmentLog->is_inside_geofence === false;
 
                 $holder = optional($activeTransaction->user)->fullName() ?? 'unknown personnel';
@@ -175,7 +187,7 @@ class GpsController extends Controller
 
                 // Everyone who oversees the armory is alerted, not only the issuing custodian.
                 if ($enteredUnsafeState) {
-                    $nearest = GpsLocation::all()
+                    $nearest = $zones
                         ->map(function ($z) use ($data) {
                             $d = $z->distanceTo((float) $data['latitude'], (float) $data['longitude']);
                             // Distance past the zone's edge, not to its centre.
@@ -211,6 +223,7 @@ class GpsController extends Controller
                     'inside_geofence' => $insideAny,
                     'zones'           => $zoneNames,
                     'inside_armory'   => $insideArmory,
+                    'trip_stage'      => $activeTransaction->trip_stage,
                 ]);
             });
         } catch (QueryException $exception) {
@@ -229,6 +242,7 @@ class GpsController extends Controller
      * (satellites in view=15, used=3)". Signed like ingest. Nothing is stored in the database:
      * RecordTrackerTraffic writes the line to storage/logs/trackers.log, where the setup tool
      * shows it, so a tracker on a hotspot can be checked without a USB cable.
+     * The battery level comes along too, so a tracker kept indoors still warns before it dies.
      */
     public function status(Request $request): JsonResponse
     {
@@ -241,13 +255,27 @@ class GpsController extends Controller
             return response()->json(['message' => 'Invalid signature.'], 401);
         }
 
-        $request->validate([
+        $data = $request->validate([
             'device_id'          => ['required', 'string', 'max:64'],
+            'equipment_id'       => ['nullable', 'integer'],
             'line'               => ['required', 'string', 'max:300'],
             'satellites_in_view' => ['nullable', 'integer', 'min:0', 'max:255'],
             'satellites_used'    => ['nullable', 'integer', 'min:0', 'max:64'],
             'rssi'               => ['nullable', 'integer', 'between:-127,0'],
+            'battery_pct'        => ['nullable', 'integer', 'between:0,100'],
         ]);
+
+        if (isset($data['equipment_id'], $data['battery_pct'])) {
+            $firearm = FirearmEquipment::find($data['equipment_id']);
+            $tx = $firearm?->transactions()
+                ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
+                ->where('gps_tracking_enabled', true)
+                ->latest('checkout_at')
+                ->first();
+            if ($tx) {
+                TrackerBattery::check($tx, $firearm, (int) $data['battery_pct'], $data['device_id']);
+            }
+        }
 
         return response()->json(['ok' => true]);
     }
@@ -326,6 +354,18 @@ class GpsController extends Controller
                     $locationNote = 'No GPS fix or assigned location available.';
                 }
 
+                // On a trip, being between zones is normal; what needs attention is a zone that is
+                // neither the camp nor the destination, or being outside the camp after the return.
+                $destination = $tx ? $zones->firstWhere('location_id', $tx->destination_location_id) : null;
+                $tripPlace = null;
+                $needsAttention = $latest?->is_inside_geofence === false;
+                if ($destination && $lat !== null && $telemetrySource !== 'placeholder') {
+                    $tripPlace = TripMonitor::placeOf((float) $lat, (float) $lon, $destination, $zones);
+                    $tripPlace = str_starts_with($tripPlace, 'other:') ? 'other' : $tripPlace;
+                    $needsAttention = $tripPlace === 'other'
+                        || ($tx->trip_stage === Transaction::TRIP_BACK_AT_CAMP && $tripPlace !== TripMonitor::PLACE_CAMP);
+                }
+
                 return [
                     'equipment_id'   => $f->equipment_id,
                     'serial_number'  => $f->serial_number,
@@ -346,6 +386,12 @@ class GpsController extends Controller
                         ->pluck('location_name')
                         ->values(),
                     'battery_pct'    => $latest?->battery_pct,
+                    // The trip to the assigned destination (TripMonitor); null for older issuances.
+                    'destination'    => $destination?->location_name,
+                    'trip_stage'     => $destination ? ($tx->trip_stage ?? Transaction::TRIP_AT_CAMP) : null,
+                    'trip_place'     => $tripPlace,
+                    'hold_until'     => $destination ? $tx->destination_arrived_at?->copy()->addMinutes(TripMonitor::holdMinutes()) : null,
+                    'needs_attention'=> $needsAttention,
                     'device_id'      => $latest?->device_id,
                     'iot_online'     => $hasLiveIot,
                     'telemetry_source' => $telemetrySource,

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ShieldCheck, AlertTriangle, Search, X, ChevronDown, ChevronUp, Battery, User } from "lucide-react";
 import { api } from "@/lib/api";
 import { fmtRelative, cn } from "@/lib/utils";
+import { TRIP_STAGE_LABEL, type TripStage } from "@/lib/trip";
 
 const LiveMap = dynamic(() => import("@/components/maps/live-map").then((m) => m.LiveMap), { ssr: false });
 const RouteHistoryMap = dynamic(() => import("@/components/maps/route-history-map").then((m) => m.RouteHistoryMap), { ssr: false });
@@ -33,7 +34,9 @@ export default function GpsPage() {
   const iotCount = allItems.filter((i) => i.telemetry_source === "iot").length;
   const staleCount = allItems.filter((i) => i.telemetry_source === "stale").length;
   const placeholderCount = allItems.filter((i) => i.telemetry_source === "placeholder").length;
-  const alertCount = allItems.filter((i) => i.inside_geofence === false || i.status === "Overdue").length;
+  // On a trip, between zones is normal: the backend says when a firearm needs attention.
+  const needsAttention = (i: any) => (i.needs_attention ?? i.inside_geofence === false) || i.status === "Overdue";
+  const alertCount = allItems.filter(needsAttention).length;
 
   const filteredItems = useMemo(() => {
     return allItems.filter((i) => {
@@ -41,7 +44,7 @@ export default function GpsPage() {
       if (filterStatus === "iot" && i.telemetry_source !== "iot") return false;
       if (filterStatus === "stale" && i.telemetry_source !== "stale") return false;
       if (filterStatus === "placeholder" && i.telemetry_source !== "placeholder") return false;
-      if (filterStatus === "alert" && (i.inside_geofence !== false && i.status !== "Overdue")) return false;
+      if (filterStatus === "alert" && !needsAttention(i)) return false;
 
       // Text search
       if (searchQuery.trim()) {
@@ -321,8 +324,8 @@ export default function GpsPage() {
                             </span>
                           </div>
                         )}
-                        {i.inside_geofence === false && (
-                          <span title="Outside Geofence" className="inline-flex text-amber-400">
+                        {(i.needs_attention ?? i.inside_geofence === false) && (
+                          <span title="Needs attention" className="inline-flex text-amber-400">
                             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                           </span>
                         )}
@@ -409,7 +412,18 @@ export default function GpsPage() {
                           {i.telemetry_source !== "placeholder" && (
                             <div className="flex justify-between items-center">
                               <span className="text-steel-400">Geofence Status</span>
-                              {i.inside_geofence ? (
+                              {i.destination ? (
+                                <span className={cn(
+                                  "inline-flex items-center gap-1 text-[10px] font-semibold text-right",
+                                  i.needs_attention ? "text-amber-400" : "text-emerald-400"
+                                )}>
+                                  {i.needs_attention
+                                    ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                    : <ShieldCheck className="h-3.5 w-3.5 shrink-0" />}
+                                  {i.needs_attention ? "Off route" : "On route"} · {i.destination}
+                                  {i.trip_stage ? ` (${TRIP_STAGE_LABEL[i.trip_stage as TripStage]})` : ""}
+                                </span>
+                              ) : i.inside_geofence ? (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
                                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
                                   Inside Zone

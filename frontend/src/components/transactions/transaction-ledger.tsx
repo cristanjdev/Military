@@ -4,6 +4,7 @@ import React from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, MapPin, RotateCcw } from "lucide-react";
 import { DataError } from "@/components/ui/data-error";
 import { fmtDate, PURPOSES, cn } from "@/lib/utils";
+import type { TripStage } from "@/lib/trip";
 
 export type TransactionStatus = "Active" | "Returned" | "Overdue" | "Cancelled";
 
@@ -35,6 +36,10 @@ export interface TransactionRow {
   expected_return_at: string;
   actual_return_at?: string | null;
   gps_tracking_enabled: boolean;
+  destination_location_id?: number | null;
+  destination?: { location_id: number; location_name: string } | null;
+  trip_stage?: TripStage | null;
+  destination_arrived_at?: string | null;
   firearm?: TransactionFirearm | null;
   user?: TransactionPerson | null;
   authorizer?: TransactionPerson | null;
@@ -231,6 +236,9 @@ export function TransactionLedger({
 
                 <td className="text-center py-2.5 px-3 text-xs text-steel-300">
                   {PURPOSES[t.purpose] ?? "—"}
+                  {t.destination && (
+                    <span className="block text-[10px] text-steel-400" title="Destination">→ {t.destination.location_name}</span>
+                  )}
                 </td>
 
                 <td className="text-center py-2.5 px-3 font-mono text-xs text-steel-400 whitespace-nowrap">

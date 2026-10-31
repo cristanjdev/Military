@@ -47,6 +47,7 @@ def main() -> int:
     p.add_argument("--lon", type=float, default=124.657010)
     p.add_argument("--interval", type=float, default=30.0, help="seconds between fixes")
     p.add_argument("--count", type=int, default=10, help="number of fixes (-1 for forever)")
+    p.add_argument("--battery", type=int, default=None, help="fixed battery %% (random 60-100 if omitted)")
     args = p.parse_args()
 
     device_id = args.device_id or f"SIM-DEV-{args.equipment:04d}"
@@ -68,7 +69,7 @@ def main() -> int:
                 "heading_deg":    round(random.uniform(0, 360), 2),
                 "altitude_meters":round(random.uniform(220, 260), 2),
                 "satellites":     random.randint(7, 12),
-                "battery_pct":    random.randint(60, 100),
+                "battery_pct":    random.randint(60, 100) if args.battery is None else args.battery,
             }
             body = json.dumps(payload).encode()
             req = urllib.request.Request(

@@ -3,12 +3,14 @@
 namespace App\Http\Controllers;
 
 use App\Models\FirearmEquipment;
+use App\Models\GpsLocation;
 use App\Models\Notification;
 use App\Models\Role;
 use App\Models\Transaction;
 use App\Models\User;
 use App\Services\AuditLogger;
 use App\Services\BiometricStepUp;
+use App\Services\TripMonitor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +21,7 @@ class TransactionController extends Controller
     {
         $isPersonnel = $request->user()->hasRole(Role::PERSONNEL);
 
-        $q = Transaction::with(['firearm.category', 'user', 'authorizer'])
+        $q = Transaction::with(['firearm.category', 'user', 'authorizer', 'destination'])
             ->when($isPersonnel, fn($query) => $query->where('user_id', $request->user()->user_id))
             ->when($request->filled('status'), fn($qq) => $qq->where('status', $request->string('status')))
             ->when($request->filled('user_id'), fn($qq) => $qq->where('user_id', $request->integer('user_id')))
@@ -79,7 +81,7 @@ class TransactionController extends Controller
     public function show(Request $request, int $id): JsonResponse
     {
         $isPersonnel = $request->user()->hasRole(Role::PERSONNEL);
-        $relations = ['firearm.category', 'user', 'authorizer'];
+        $relations = ['firearm.category', 'user', 'authorizer', 'destination'];
         if (! $isPersonnel) {
             $relations[] = 'gpsLogs';
         }
@@ -107,7 +109,12 @@ class TransactionController extends Controller
             'condition_on_issue'=> ['required', 'integer', 'between:1,4'],
             'notes'             => ['nullable', 'string', 'max:500'],
             'gps_tracking_enabled' => ['sometimes', 'boolean'],
+            // Where the firearm is going; TripMonitor follows it there and back.
+            'destination_location_id' => ['required', 'integer', 'exists:gps_locations,location_id'],
         ]);
+        if ($refused = $this->refuseCampDestination((int) $data['destination_location_id'])) {
+            return $refused;
+        }
 
         // Fresh fingerprint scan, bound to this firearm, when biometrics are required.
         if ($denied = BiometricStepUp::consume($request, 'issue', 'equipment:' . $data['equipment_id'])) {
@@ -142,6 +149,9 @@ class TransactionController extends Controller
                 'condition_on_issue'   => $data['condition_on_issue'],
                 'notes'                => $data['notes'] ?? null,
                 'gps_tracking_enabled' => $data['gps_tracking_enabled'] ?? true,
+                'destination_location_id' => $data['destination_location_id'],
+                'trip_stage'           => Transaction::TRIP_AT_CAMP,
+                'trip_place'           => TripMonitor::PLACE_CAMP,
             ]);
 
             $firearm->update(['availability_status' => FirearmEquipment::STATUS_CHECKED_OUT]);
@@ -152,11 +162,70 @@ class TransactionController extends Controller
                 user: $authorizer,
                 equipmentId: $firearm->equipment_id,
                 request: $request,
-                metadata: ['transaction_id' => $tx->transaction_id, 'recipient_id' => $issuee->user_id],
+                metadata: ['transaction_id' => $tx->transaction_id, 'recipient_id' => $issuee->user_id,
+                    'destination_location_id' => $tx->destination_location_id],
             );
 
-            return response()->json($tx->fresh(['firearm', 'user', 'authorizer']), 201);
+            return response()->json($tx->fresh(['firearm', 'user', 'authorizer', 'destination']), 201);
         });
+    }
+
+    /**
+     * Change an issuance's destination before the firearm gets there: the Armory Custodian and the
+     * roles above it (Command Officer, Administrator). An issuance from before destinations existed
+     * starts its trip here.
+     */
+    public function changeDestination(Request $request, int $id): JsonResponse
+    {
+        $data = $request->validate([
+            'destination_location_id' => ['required', 'integer', 'exists:gps_locations,location_id'],
+        ]);
+        if ($refused = $this->refuseCampDestination((int) $data['destination_location_id'])) {
+            return $refused;
+        }
+
+        return DB::transaction(function () use ($id, $data, $request) {
+            $tx = Transaction::with(['firearm', 'destination'])->lockForUpdate()->findOrFail($id);
+
+            if ($tx->status !== Transaction::STATUS_ACTIVE && $tx->status !== Transaction::STATUS_OVERDUE) {
+                return response()->json(['message' => 'Transaction is not active.'], 409);
+            }
+            if ($tx->destination_location_id
+                && ! in_array($tx->trip_stage, [Transaction::TRIP_AT_CAMP, Transaction::TRIP_OUTBOUND], true)) {
+                return response()->json(['message' => 'The firearm has already reached its destination; the destination can no longer change.'], 409);
+            }
+
+            $before = optional($tx->destination)->location_name;
+            $tx->update([
+                'destination_location_id' => $data['destination_location_id'],
+                'trip_stage'              => $tx->trip_stage ?? Transaction::TRIP_AT_CAMP,
+                'trip_place'              => $tx->trip_place ?? TripMonitor::PLACE_CAMP,
+            ]);
+            $after = $tx->fresh('destination')->destination->location_name;
+
+            AuditLogger::log(
+                action: 'destination_change',
+                description: "Destination of {$tx->firearm->serial_number} changed from " . ($before ?? 'none') . " to {$after}",
+                user: $request->user(),
+                equipmentId: $tx->equipment_id,
+                request: $request,
+                metadata: ['transaction_id' => $tx->transaction_id, 'from' => $before, 'to' => $after],
+            );
+
+            return response()->json($tx->fresh(['firearm', 'user', 'authorizer', 'destination']));
+        });
+    }
+
+    /** A destination is somewhere the firearm travels to, so never a camp or armory zone. */
+    private function refuseCampDestination(int $locationId): ?JsonResponse
+    {
+        if (GpsLocation::findOrFail($locationId)->isCamp()) {
+            return response()->json([
+                'message' => 'The destination must be a zone outside the camp.',
+                'errors'  => ['destination_location_id' => ['The destination must be a zone outside the camp.']],
+            ], 422);
+        }
+        return null;
     }
 
     public function returnFirearm(Request $request, int $id): JsonResponse

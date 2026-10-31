@@ -88,6 +88,7 @@ class BiometricStepUpTest extends TestCase
             'expected_return_at' => now()->addHours(8)->toIso8601String(),
             'purpose'            => 1,
             'condition_on_issue' => 2,
+            'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
         ];
     }
 

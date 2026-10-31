@@ -28,6 +28,7 @@ class GpsLocationSeeder extends Seeder
                 'center_longitude' => 124.658000,
                 'radius_meters'    => 1500,
                 'is_armory'        => false,
+                'is_camp'          => true,
             ],
             [
                 'location_name'    => 'Northern Mindanao Training Range',

@@ -1,13 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Clock, Mail, MapPin, Phone, Radio, User, X } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, Clock, Flag, Loader2, Mail, MapPin, Phone, Radio, User, X } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { cn, fmtDate, fmtRelative } from "@/lib/utils";
+import { destinationChangeable, TRIP_STAGE_LABEL, type TripStage } from "@/lib/trip";
+import { useAuthStore, hasRole } from "@/store/auth";
 import type { TransactionRow } from "./transaction-ledger";
+import { DestinationSelect } from "./destination-select";
 
 const LiveMap = dynamic(() => import("@/components/maps/live-map").then((m) => m.LiveMap), { ssr: false });
 
@@ -17,6 +22,10 @@ interface LivePosition {
   lon: number;
   captured_at?: string | null;
   inside_geofence?: boolean | null;
+  destination?: string | null;
+  trip_stage?: TripStage | null;
+  hold_until?: string | null;
+  needs_attention?: boolean;
   telemetry_source: "iot" | "stale" | "placeholder" | "missing";
   location_note: string;
 }
@@ -52,6 +61,28 @@ export function LocateFirearmModal({ transaction, onClose }: { transaction: Tran
   const person = transaction.user;
   const overdue = transaction.status === "Overdue" ? overdueFor(transaction.expected_return_at) : null;
   const source = position ? SOURCE_LABEL[position.telemetry_source] : null;
+
+  // The destination: set at issuance; the Custodian and the roles above it may change it until arrival.
+  const qc = useQueryClient();
+  const user = useAuthStore((state) => state.user);
+  const [editingDestination, setEditingDestination] = useState(false);
+  const [newDestination, setNewDestination] = useState("");
+  const destination = position?.destination ?? transaction.destination?.location_name ?? null;
+  const stage = position?.trip_stage ?? transaction.trip_stage ?? null;
+  const canChangeDestination = hasRole(user, "Administrator", "Command Officer", "Armory Custodian")
+    && destinationChangeable(destination ? stage : null);
+  const changeDestination = useMutation({
+    mutationFn: async () => api.patch(`/transactions/${transaction.transaction_id}/destination`, {
+      destination_location_id: Number(newDestination),
+    }),
+    onSuccess: () => {
+      toast.success("Destination changed.");
+      setEditingDestination(false);
+      qc.invalidateQueries({ queryKey: ["gps-live"] });
+      qc.invalidateQueries({ queryKey: ["transactions"] });
+    },
+    onError: (e: any) => toast.error(e.response?.data?.message ?? "The destination could not be changed."),
+  });
 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
@@ -136,12 +167,61 @@ export function LocateFirearmModal({ transaction, onClose }: { transaction: Tran
                   {position.captured_at && (
                     <p className="text-xs text-steel-400">Last fix {fmtRelative(position.captured_at)}</p>
                   )}
-                  {position.inside_geofence === false && (
-                    <p className="text-xs font-semibold text-red-300">Outside all authorized zones</p>
+                  {(position.needs_attention ?? position.inside_geofence === false) && (
+                    <p className="text-xs font-semibold text-red-300">
+                      {position.destination ? "Off its route" : "Outside all authorized zones"}
+                    </p>
                   )}
                 </>
               ) : (
                 <p className="text-xs text-steel-400">{isLoading ? "Loading…" : "Unknown"}</p>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-steel-800 bg-steel-900/40 p-3 space-y-1.5">
+              <p className="text-[10px] uppercase tracking-widest text-olive-300">Trip</p>
+              {destination ? (
+                <>
+                  <p className="flex items-center gap-1.5 text-sm font-semibold text-olive-50">
+                    <Flag className="h-4 w-4 text-olive-300" /> {destination}
+                  </p>
+                  {stage && <p className="text-xs text-steel-300">{TRIP_STAGE_LABEL[stage]}</p>}
+                  {stage === "on_site" && position?.hold_until && (
+                    <p className="text-xs text-steel-400">Must stay until {fmtDate(position.hold_until)}</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-steel-400">No destination was set for this issuance.</p>
+              )}
+              {canChangeDestination && !editingDestination && (
+                <button
+                  type="button"
+                  className="btn-ghost text-xs px-0"
+                  onClick={() => { setNewDestination(""); setEditingDestination(true); }}
+                >
+                  {destination ? "Change destination" : "Set destination"}
+                </button>
+              )}
+              {editingDestination && (
+                <form
+                  className="space-y-2 pt-1"
+                  onSubmit={(e) => { e.preventDefault(); changeDestination.mutate(); }}
+                >
+                  <DestinationSelect
+                    value={newDestination}
+                    onChange={setNewDestination}
+                    disabled={changeDestination.isPending}
+                    className="input-field w-full text-xs"
+                  />
+                  <div className="flex gap-2">
+                    <button type="submit" className="btn-primary text-xs" disabled={changeDestination.isPending || !newDestination}>
+                      {changeDestination.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />} Save
+                    </button>
+                    <button type="button" className="btn-secondary text-xs" onClick={() => setEditingDestination(false)}>
+                      Cancel
+                    </button>
+                  </div>
+                </form>
               )}
             </div>
 
