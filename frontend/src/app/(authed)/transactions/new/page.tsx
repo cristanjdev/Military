@@ -113,7 +113,7 @@ function NewIssuanceContent() {
           <Field label="Purpose" required>
             <select className="input-field" value={form.purpose} onChange={(e) => set("purpose", Number(e.target.value))}>
               <option value={1}>Training</option>
-              <option value={2}>Operation</option>
+              <option value={5}>Funeral</option>
             </select>
           </Field>
 

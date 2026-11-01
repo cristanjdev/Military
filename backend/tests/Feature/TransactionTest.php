@@ -86,7 +86,7 @@ class TransactionTest extends TestCase
             'equipment_id'       => $firearm->equipment_id,
             'user_id'            => $personnel->user_id,
             'expected_return_at' => now()->addHours(8)->toIso8601String(),
-            'purpose'            => 2,
+            'purpose'            => Transaction::PURPOSE_FUNERAL,
             'condition_on_issue' => 1,
             'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
         ]);

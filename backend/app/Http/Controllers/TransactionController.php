@@ -103,9 +103,9 @@ class TransactionController extends Controller
             'equipment_id'      => ['required', 'exists:firearm_equipment,equipment_id'],
             'user_id'           => ['required', 'exists:users,user_id'],
             'expected_return_at'=> ['required', 'date', 'after:now'],
-            // Issuance is for Training or Operation only. Maintenance and inspection are
-            // logged on the Maintenance page; 3/4 survive only on historical rows.
-            'purpose'           => ['required', 'integer', 'in:' . Transaction::PURPOSE_TRAINING . ',' . Transaction::PURPOSE_OPERATION],
+            // Issuance is for Training or Funeral only. Maintenance and inspection are
+            // logged on the Maintenance page; 2/3/4 survive only on historical rows.
+            'purpose'           => ['required', 'integer', 'in:' . Transaction::PURPOSE_TRAINING . ',' . Transaction::PURPOSE_FUNERAL],
             'condition_on_issue'=> ['required', 'integer', 'between:1,4'],
             'notes'             => ['nullable', 'string', 'max:500'],
             'gps_tracking_enabled' => ['sometimes', 'boolean'],

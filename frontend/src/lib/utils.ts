@@ -29,6 +29,7 @@ export const PURPOSES: Record<number, string> = {
   2: "Operation",
   3: "Maintenance",
   4: "Inspection",
+  5: "Funeral",
 };
 
 export const CONDITIONS: Record<number, { label: string; tone: string }> = {

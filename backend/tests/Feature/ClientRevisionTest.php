@@ -44,12 +44,21 @@ class ClientRevisionTest extends TestCase
         return FirearmEquipment::where('availability_status', FirearmEquipment::STATUS_AVAILABLE)->firstOrFail();
     }
 
-    public function test_issuance_accepts_only_training_or_operation(): void
+    public function test_issuance_accepts_only_training_or_funeral(): void
     {
         $this->actAs('armory.custodian');
         $personnel = User::where('username', 'pvt.dela.cruz')->first();
 
-        foreach ([Transaction::PURPOSE_MAINTENANCE, Transaction::PURPOSE_INSPECTION] as $purpose) {
+        $this->postJson('/api/v1/transactions/issue', [
+            'equipment_id'       => $this->availableFirearm()->equipment_id,
+            'user_id'            => $personnel->user_id,
+            'expected_return_at' => now()->addHours(8)->toIso8601String(),
+            'purpose'            => Transaction::PURPOSE_FUNERAL,
+            'condition_on_issue' => 2,
+            'destination_location_id' => \App\Models\GpsLocation::where('location_name', 'Northern Mindanao Training Range')->value('location_id'),
+        ])->assertStatus(201);
+
+        foreach ([Transaction::PURPOSE_OPERATION, Transaction::PURPOSE_MAINTENANCE, Transaction::PURPOSE_INSPECTION] as $purpose) {
             $this->postJson('/api/v1/transactions/issue', [
                 'equipment_id'       => $this->availableFirearm()->equipment_id,
                 'user_id'            => $personnel->user_id,

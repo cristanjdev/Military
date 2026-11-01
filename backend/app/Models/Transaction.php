@@ -19,9 +19,10 @@ class Transaction extends Model
     public const STATUS_CANCELLED = 'Cancelled';
 
     public const PURPOSE_TRAINING    = 1;
-    public const PURPOSE_OPERATION   = 2;
+    public const PURPOSE_OPERATION   = 2;   // no longer issued; kept for older records
     public const PURPOSE_MAINTENANCE = 3;
     public const PURPOSE_INSPECTION  = 4;
+    public const PURPOSE_FUNERAL     = 5;
 
     /** Trip from camp to the assigned destination and back (TripMonitor). */
     public const TRIP_AT_CAMP      = 'at_camp';
@@ -97,7 +98,8 @@ class Transaction extends Model
             self::PURPOSE_OPERATION   => 'Operation',
             self::PURPOSE_MAINTENANCE => 'Maintenance',
             self::PURPOSE_INSPECTION  => 'Inspection',
-            default                   => 'Other',
+            self::PURPOSE_FUNERAL     => 'Funeral',
+            default                  => 'Other',
         };
     }
 }

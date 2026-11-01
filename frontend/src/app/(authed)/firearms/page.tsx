@@ -131,7 +131,7 @@ function RegisterFirearmModal({ onClose, onSuccess }: { onClose: () => void; onS
     condition_status: 2,
     current_location_id: "",
     acquisition_date: new Date().toISOString().substring(0, 10),
-    acquisition_cost: 0,
+    acquisition_cost: "",
     remarks: "",
   });
   const [loading, setLoading] = useState(false);
@@ -150,7 +150,11 @@ function RegisterFirearmModal({ onClose, onSuccess }: { onClose: () => void; onS
     e.preventDefault();
     setLoading(true);
     try {
-      const payload = { ...form, current_location_id: form.current_location_id || null };
+      const payload = {
+        ...form,
+        acquisition_cost: Number(form.acquisition_cost),
+        current_location_id: form.current_location_id || null,
+      };
       const { data } = await api.post("/firearms", payload);
       toast.success(`Registered ${data.serial_number}`);
       onSuccess();
@@ -245,8 +249,9 @@ function RegisterFirearmModal({ onClose, onSuccess }: { onClose: () => void; onS
               </div>
               <div>
                 <label className="text-xs text-steel-400 mb-1 block">Cost (PHP) <span className="text-red-400">*</span></label>
-                <input className="input-field w-full h-[42px]" type="number" min={0} step="0.01" required value={form.acquisition_cost}
-                       onChange={(e) => setForm({ ...form, acquisition_cost: Number(e.target.value) })} />
+                <input className="input-field w-full h-[42px]" type="number" min={0} step="0.01" required placeholder="0.00"
+                       value={form.acquisition_cost}
+                       onChange={(e) => setForm({ ...form, acquisition_cost: e.target.value })} />
               </div>
             </div>
           </div>

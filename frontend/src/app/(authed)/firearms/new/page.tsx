@@ -31,7 +31,7 @@ export default function NewFirearmPage() {
     condition_status: 2,
     current_location_id: "",
     acquisition_date: new Date().toISOString().substring(0, 10),
-    acquisition_cost: 0,
+    acquisition_cost: "",
     remarks: "",
   });
 
@@ -43,7 +43,11 @@ export default function NewFirearmPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const payload = { ...form, current_location_id: form.current_location_id || null };
+      const payload = {
+        ...form,
+        acquisition_cost: Number(form.acquisition_cost),
+        current_location_id: form.current_location_id || null,
+      };
       const { data } = await api.post("/firearms", payload);
       toast.success(`Registered ${data.serial_number}`);
       router.replace(`/firearms/${data.equipment_id}`);
@@ -113,8 +117,9 @@ export default function NewFirearmPage() {
                    onChange={(e) => set("acquisition_date", e.target.value)} />
           </Field>
           <Field label="Acquisition Cost (PHP)" required>
-            <input className="input-field" type="number" min={0} step="0.01" required value={form.acquisition_cost}
-                   onChange={(e) => set("acquisition_cost", Number(e.target.value))} />
+            <input className="input-field" type="number" min={0} step="0.01" required placeholder="0.00"
+                   value={form.acquisition_cost}
+                   onChange={(e) => set("acquisition_cost", e.target.value)} />
           </Field>
         </div>
 

@@ -70,7 +70,7 @@ class OperationalDataSeeder extends Seeder
     {
         $purposes = [
             Transaction::PURPOSE_TRAINING,
-            Transaction::PURPOSE_OPERATION,
+            Transaction::PURPOSE_FUNERAL,
         ];
 
         for ($i = 0; $i < 14; $i++) {
@@ -107,8 +107,8 @@ class OperationalDataSeeder extends Seeder
     {
         $plan = [
             ['index' => 0, 'hoursOut' => 3,  'dueInHours' => 5,   'status' => Transaction::STATUS_ACTIVE,  'availability' => FirearmEquipment::STATUS_CHECKED_OUT, 'purpose' => Transaction::PURPOSE_TRAINING],
-            ['index' => 5, 'hoursOut' => 6,  'dueInHours' => 2,   'status' => Transaction::STATUS_ACTIVE,  'availability' => FirearmEquipment::STATUS_CHECKED_OUT, 'purpose' => Transaction::PURPOSE_OPERATION],
-            ['index' => 7, 'hoursOut' => 40, 'dueInHours' => -16, 'status' => Transaction::STATUS_OVERDUE, 'availability' => FirearmEquipment::STATUS_OVERDUE,     'purpose' => Transaction::PURPOSE_OPERATION],
+            ['index' => 5, 'hoursOut' => 6,  'dueInHours' => 2,   'status' => Transaction::STATUS_ACTIVE,  'availability' => FirearmEquipment::STATUS_CHECKED_OUT, 'purpose' => Transaction::PURPOSE_FUNERAL],
+            ['index' => 7, 'hoursOut' => 40, 'dueInHours' => -16, 'status' => Transaction::STATUS_OVERDUE, 'availability' => FirearmEquipment::STATUS_OVERDUE,     'purpose' => Transaction::PURPOSE_FUNERAL],
         ];
 
         foreach ($plan as $slot => $row) {

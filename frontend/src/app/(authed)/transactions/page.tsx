@@ -613,7 +613,7 @@ function IssuanceModal({ onClose, onSuccess }: { onClose: () => void; onSuccess:
                   onChange={(event) => setForm({ ...form, purpose: Number(event.target.value) })}
                 >
                   <option value={1}>Training</option>
-                  <option value={2}>Operation</option>
+                  <option value={5}>Funeral</option>
                 </select>
               </div>
               <div>
