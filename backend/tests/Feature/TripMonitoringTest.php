@@ -68,6 +68,36 @@ class TripMonitoringTest extends TestCase
             ->assertJsonPath('trip_stage', Transaction::TRIP_AT_CAMP);
     }
 
+    public function test_a_newly_created_zone_can_be_chosen_as_a_destination(): void
+    {
+        $this->actAs('admin');
+        $zone = $this->postJson('/api/v1/locations', [
+            'location_name'    => 'Lumbia Firing Range',
+            'center_latitude'  => 8.40,
+            'center_longitude' => 124.60,
+            'radius_meters'    => 300,
+            'is_armory'        => false,
+            'is_camp'          => false,
+            'security_level'   => 1,
+        ])->assertCreated()->json();
+
+        // The issuance form lists every zone that is neither camp nor armory.
+        $listed = collect($this->getJson('/api/v1/locations')->assertOk()->json())
+            ->firstWhere('location_id', $zone['location_id']);
+        $this->assertFalse($listed['is_camp']);
+        $this->assertFalse($listed['is_armory']);
+
+        $this->actAs('armory.custodian');
+        $this->postJson('/api/v1/transactions/issue', [
+            'equipment_id'            => FirearmEquipment::where('availability_status', FirearmEquipment::STATUS_AVAILABLE)->value('equipment_id'),
+            'user_id'                 => User::where('username', 'pvt.dela.cruz')->value('user_id'),
+            'expected_return_at'      => now()->addHours(8)->toIso8601String(),
+            'purpose'                 => 1,
+            'condition_on_issue'      => 2,
+            'destination_location_id' => $zone['location_id'],
+        ])->assertCreated()->assertJsonPath('destination.location_name', 'Lumbia Firing Range');
+    }
+
     public function test_a_normal_trip_sends_normal_notifications_only(): void
     {
         [$firearm, $tx] = $this->trip();

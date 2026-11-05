@@ -27,6 +27,11 @@ export function DestinationSelect({
   const zonesQuery = useQuery({
     queryKey: ["locations"],
     queryFn: async () => (await api.get<Zone[]>("/locations")).data,
+    // A zone just added on the Geofences page (in another tab, or by another user) must appear
+    // here without reloading the page: always fetch fresh zones when the form opens or regains focus.
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
   });
   const destinations = (zonesQuery.data ?? []).filter((z) => !z.is_camp && !z.is_armory);
 
