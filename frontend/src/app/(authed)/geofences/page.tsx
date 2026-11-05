@@ -142,24 +142,23 @@ export default function GeofencesPage() {
               {/* Zone Information */}
               <div>
                 <p className="text-[10px] uppercase tracking-widest text-olive-300 mb-1.5">Zone Information</p>
-                <div className="grid grid-cols-[6fr_2fr_2fr] gap-3">
-                  <div>
-                    <label className="text-xs text-steel-400 mb-1 block">Zone Name</label>
-                    <input className="input-field w-full" required placeholder="e.g. Main Armory"
-                           value={form.location_name} onChange={(e) => setForm({ ...form, location_name: e.target.value })} />
-                  </div>
-                  <div>
-                    <label className="text-xs text-steel-400 mb-1 block">Type</label>
-                    <TypeToggle label="Armory" on={form.is_armory} onClick={() => setForm({ ...form, is_armory: !form.is_armory })} />
-                  </div>
-                  <div>
-                    <label className="text-xs text-steel-400 mb-1 block">&nbsp;</label>
-                    <TypeToggle label="Camp" on={form.is_camp} onClick={() => setForm({ ...form, is_camp: !form.is_camp })} />
-                  </div>
+                <div>
+                  <label className="text-xs text-steel-400 mb-1 block">Zone Name</label>
+                  <input className="input-field w-full" required placeholder="e.g. Lumbia Firing Range"
+                         value={form.location_name} onChange={(e) => setForm({ ...form, location_name: e.target.value })} />
                 </div>
-                <p className="mt-1.5 text-[11px] text-steel-500">
-                  Mark the camp area as Camp. Any zone that is not Camp or Armory can be chosen as a destination when issuing a firearm.
-                </p>
+                <div className="mt-2">
+                  <label className="text-xs text-steel-400 mb-1 block">Type</label>
+                  <div role="radiogroup" aria-label="Zone type" className="grid grid-cols-3 gap-2">
+                    {ZONE_TYPES.map((t) => (
+                      <TypeOption key={t.value} label={t.label} on={zoneType(form) === t.value}
+                                  onClick={() => setForm({ ...form, is_armory: t.value === "armory", is_camp: t.value === "camp" })} />
+                    ))}
+                  </div>
+                  <p className="mt-1.5 text-[11px] text-steel-500">
+                    {ZONE_TYPES.find((t) => t.value === zoneType(form))?.hint}
+                  </p>
+                </div>
                 <div className="mt-2">
                   <label className="text-xs text-steel-400 mb-1 block">Description</label>
                   <input className="input-field w-full" placeholder="Optional description"
@@ -238,7 +237,7 @@ export default function GeofencesPage() {
                 <td className="text-center text-steel-200">{loc.radius_meters}m</td>
                 <td className="text-center">
                   <span className={`pill ${loc.is_armory || loc.is_camp ? "pill-tactical" : "pill-muted"}`}>
-                    {loc.is_armory ? "Armory" : loc.is_camp ? "Camp" : "Destination"}
+                    {ZONE_TYPES.find((t) => t.value === zoneType(loc))?.label}
                   </span>
                 </td>
                 <td className="text-center text-xs text-steel-400 max-w-xs truncate">{loc.description ?? "—"}</td>
@@ -278,10 +277,24 @@ export default function GeofencesPage() {
   );
 }
 
-function TypeToggle({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
+type ZoneType = "destination" | "camp" | "armory";
+
+const ZONE_TYPES: { value: ZoneType; label: string; hint: string }[] = [
+  { value: "destination", label: "Destination", hint: "A place firearms are sent to. It can be chosen as the destination when issuing a firearm." },
+  { value: "camp", label: "Camp", hint: "Part of the camp. Issued firearms leave from and return to it; it is not offered as a destination." },
+  { value: "armory", label: "Armory", hint: "Where firearms are stored. It counts as part of the camp and is not offered as a destination." },
+];
+
+function zoneType(z: { is_armory: boolean; is_camp: boolean }): ZoneType {
+  return z.is_armory ? "armory" : z.is_camp ? "camp" : "destination";
+}
+
+function TypeOption({ label, on, onClick }: { label: string; on: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
+      role="radio"
+      aria-checked={on}
       onClick={onClick}
       className={`w-full h-[42px] px-3 rounded-md border text-sm font-medium transition-colors duration-200 flex items-center justify-center gap-2 ${
         on
@@ -289,10 +302,10 @@ function TypeToggle({ label, on, onClick }: { label: string; on: boolean; onClic
           : "bg-steel-900/60 border-steel-700/40 text-steel-400 hover:border-steel-600"
       }`}
     >
-      <span className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 transition-colors ${
-        on ? "bg-olive-500 border-olive-500" : "border-steel-500"
+      <span className={`h-4 w-4 rounded-full border flex items-center justify-center shrink-0 transition-colors ${
+        on ? "border-olive-400" : "border-steel-500"
       }`}>
-        {on && <svg className="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>}
+        {on && <span className="h-2 w-2 rounded-full bg-olive-400" />}
       </span>
       {label}
     </button>
