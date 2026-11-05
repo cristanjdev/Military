@@ -203,6 +203,40 @@ class FirearmTest extends TestCase
         $response->assertStatus(422);
     }
 
+    public function test_edit_firearm_details(): void
+    {
+        $this->actAsAdmin();
+        $firearm = FirearmEquipment::where('availability_status', FirearmEquipment::STATUS_AVAILABLE)->first();
+
+        $this->patchJson("/api/v1/firearms/{$firearm->equipment_id}", [
+            'model'            => 'M16A1 (rebuilt)',
+            'condition_status' => 3,
+            'remarks'          => 'Barrel replaced.',
+        ])->assertOk()->assertJsonFragment(['model' => 'M16A1 (rebuilt)']);
+
+        $this->assertSame(3, (int) $firearm->fresh()->condition_status);
+    }
+
+    public function test_delete_firearm_needs_the_password_and_hides_it_from_lists(): void
+    {
+        $admin = $this->actAsAdmin();
+        $admin->forceFill(['password' => \Illuminate\Support\Facades\Hash::make('Correct#Pass1')])->save();
+        $firearm = FirearmEquipment::where('availability_status', FirearmEquipment::STATUS_AVAILABLE)->first();
+
+        $this->deleteJson("/api/v1/firearms/{$firearm->equipment_id}", ['password' => 'wrong'])
+            ->assertStatus(422);
+        $this->assertNotNull(FirearmEquipment::find($firearm->equipment_id));
+
+        $this->deleteJson("/api/v1/firearms/{$firearm->equipment_id}", ['password' => 'Correct#Pass1'])
+            ->assertOk();
+
+        $this->assertNull(FirearmEquipment::find($firearm->equipment_id));
+        $this->assertSoftDeleted('firearm_equipment', ['equipment_id' => $firearm->equipment_id]);
+        $this->getJson('/api/v1/firearms?per_page=100')
+            ->assertOk()
+            ->assertJsonMissing(['serial_number' => $firearm->serial_number]);
+    }
+
     public function test_personnel_firearm_reads_are_limited_to_current_assignments(): void
     {
         $personnel = User::where('username', 'pvt.dela.cruz')->firstOrFail();

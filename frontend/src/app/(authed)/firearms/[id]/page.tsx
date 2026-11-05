@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect } from "react";
@@ -26,12 +26,16 @@ import {
   Shield,
   Barcode,
   ExternalLink,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { CONDITIONS, STATUSES, fmtDate, PURPOSES } from "@/lib/utils";
 import { DataError } from "@/components/ui/data-error";
 import { useAuthStore, hasRole } from "@/store/auth";
+import { PasswordConfirmModal } from "@/components/ui/password-confirm-modal";
+import { EditFirearmModal } from "@/components/firearms/edit-firearm-modal";
 
 export default function FirearmDetailPage() {
   const router = useRouter();
@@ -39,6 +43,11 @@ export default function FirearmDetailPage() {
   const user = useAuthStore((s) => s.user);
   // Issue / return buttons: only the Armory Custodian releases and receives firearms.
   const canManage = hasRole(user, "Administrator", "Armory Custodian");
+  // Edit / delete the record: the inventory roles the API allows.
+  const canEditInventory = hasRole(user, "Administrator", "Command Officer", "S4 Officer", "Armory Custodian");
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const [qrSvg, setQrSvg] = useState<string | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
@@ -157,6 +166,30 @@ export default function FirearmDetailPage() {
           >
             <Crosshair className="h-3.5 w-3.5 text-olive-400" /> Map
           </a>
+
+          {canEditInventory && (
+            <button
+              onClick={() => setEditing(true)}
+              className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+            >
+              <Pencil className="h-3.5 w-3.5 text-steel-300" /> Edit
+            </button>
+          )}
+
+          {canEditInventory && (
+            <button
+              onClick={() => setDeleting(true)}
+              disabled={data.availability_status === 2 || data.availability_status === 4}
+              title={
+                data.availability_status === 2 || data.availability_status === 4
+                  ? "Return the firearm before deleting it"
+                  : "Delete this firearm"
+              }
+              className="btn-danger text-xs py-1.5 px-3 flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </button>
+          )}
         </div>
       </div>
 
@@ -607,6 +640,32 @@ export default function FirearmDetailPage() {
           </div>
         </div>
       </div>
+
+      {editing && (
+        <EditFirearmModal
+          firearm={data}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            setEditing(false);
+            refetch();
+            qc.invalidateQueries({ queryKey: ["firearms"] });
+          }}
+        />
+      )}
+
+      <PasswordConfirmModal
+        open={deleting}
+        onClose={() => setDeleting(false)}
+        onConfirm={async (password) => {
+          await api.delete(`/firearms/${data.equipment_id}`, { data: { password } });
+          toast.success(`Deleted ${data.serial_number}`);
+          qc.invalidateQueries({ queryKey: ["firearms"] });
+          qc.invalidateQueries({ queryKey: ["available-firearms"] });
+          router.replace("/firearms");
+        }}
+        title="Delete Firearm"
+        description={`Delete ${data.serial_number} (${data.model})? It disappears from the registry and from every Select Firearm list. Its past transactions stay in the records.`}
+      />
     </div>
   );
 }

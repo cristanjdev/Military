@@ -31,6 +31,11 @@
         <env name="DB_CONNECTION" value="mysql"/>
         <env name="DB_DATABASE" value="armorydb_test"/>
         <env name="MAIL_MAILER" value="array"/>
+        <!-- Never reach a real email service from tests, even when .env holds the keys. -->
+        <env name="MAILJET_API_KEY" value=""/>
+        <env name="MAILJET_SECRET_KEY" value=""/>
+        <env name="BREVO_API_KEY" value=""/>
+        <env name="RESEND_API_KEY" value=""/>
         <env name="PULSE_ENABLED" value="false"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>
