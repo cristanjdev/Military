@@ -114,6 +114,19 @@ If you edit backend\.env while it runs, apply the change with:
 
 then stop (Ctrl + C) and start "php artisan serve" again.
 
+Emails (Forgot Password codes and alerts):
+
+  Without email keys, "Forgot password?" shows the code on the screen
+  ("Verification code generated for local development") and no email is
+  sent. To send real emails the same way as the online system, add to
+  backend\.env the Mailjet keys and sender used there (ask the developer;
+  never put them in the repository):
+       MAILJET_API_KEY=<key>
+       MAILJET_SECRET_KEY=<secret>
+       MAIL_FROM_ADDRESS=<the sender address used online>
+  Then php artisan config:clear and restart "php artisan serve".
+  The first emails may land in Spam: mark one "Not spam".
+
 
 --------------------------------------------------------------------------------
  3. FRONTEND (the website)
@@ -512,6 +525,8 @@ from the project folder.
                                                       NEXT_PUBLIC_API_URL correct?
   "Account is locked" ............................... wait 30 min, or reset it
                                                       with "Forgot password?"
+  "Verification code generated for local
+   development" / no reset email arrives ............ add the email keys (end of section 2)
   QR camera: "Browsers only allow camera access" .... open http://localhost:3000
   Tracker says "[gps] NO DATA" ...................... GPS wiring: TX -> D18, GND, and
                                                       the GPS pins soldered
