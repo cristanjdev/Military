@@ -241,6 +241,25 @@ class TripMonitoringTest extends TestCase
         ], $body)->assertOk();
 
         $this->assertSame(['battery_critical'], $this->issuerTypes($tx));
+
+        // The GPS page shows that reading although the tracker never sent a position.
+        $this->actAs('admin');
+        $item = collect($this->getJson('/api/v1/gps/live')->assertOk()->json('items'))
+            ->firstWhere('equipment_id', $firearm->equipment_id);
+        $this->assertSame(8, $item['battery_pct']);
+        $this->assertNotNull($item['battery_reported_at']);
+    }
+
+    public function test_the_gps_page_shows_the_latest_battery_reading_from_positions(): void
+    {
+        [$firearm, $tx] = $this->trip();
+        $this->report($firearm, $tx, self::CAMP, 1, 64);
+
+        $this->actAs('admin');
+        $item = collect($this->getJson('/api/v1/gps/live')->assertOk()->json('items'))
+            ->firstWhere('equipment_id', $firearm->equipment_id);
+        $this->assertSame(64, $item['battery_pct']);
+        $this->assertNotNull($item['battery_reported_at']);
     }
 
     /** An issued firearm heading for the training range, still at the camp. */

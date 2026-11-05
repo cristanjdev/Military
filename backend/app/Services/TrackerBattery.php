@@ -6,6 +6,7 @@ use App\Models\FirearmEquipment;
 use App\Models\Notification;
 use App\Models\Transaction;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -20,6 +21,21 @@ use Illuminate\Support\Facades\Log;
 class TrackerBattery
 {
     private const REARM_MARGIN = 5;
+
+    /**
+     * Keeps the latest reading on the firearm, so the GPS page shows it even while the tracker
+     * has no fix. A plain query: it must not change the firearm's updated_at or audit trail.
+     */
+    public static function record(int $equipmentId, ?int $pct): void
+    {
+        if ($pct === null) {
+            return;
+        }
+        DB::table('firearm_equipment')->where('equipment_id', $equipmentId)->update([
+            'tracker_battery_pct' => $pct,
+            'tracker_battery_at'  => now(),
+        ]);
+    }
 
     public static function check(Transaction $tx, FirearmEquipment $firearm, ?int $pct, string $deviceId): void
     {

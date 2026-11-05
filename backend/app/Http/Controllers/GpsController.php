@@ -163,6 +163,7 @@ class GpsController extends Controller
                 ]);
 
                 TrackerWatchdog::seen($data['device_id'], $firearm, $activeTransaction);
+                TrackerBattery::record($firearm->equipment_id, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null);
                 TrackerBattery::check($activeTransaction, $firearm, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null, $data['device_id']);
 
                 // An issuance with an assigned destination follows the trip rules (TripMonitor);
@@ -267,6 +268,9 @@ class GpsController extends Controller
 
         if (isset($data['equipment_id'], $data['battery_pct'])) {
             $firearm = FirearmEquipment::find($data['equipment_id']);
+            if ($firearm) {
+                TrackerBattery::record($firearm->equipment_id, (int) $data['battery_pct']);
+            }
             $tx = $firearm?->transactions()
                 ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
                 ->where('gps_tracking_enabled', true)
@@ -385,7 +389,12 @@ class GpsController extends Controller
                         ->filter(fn($z) => $z->contains((float) $lat, (float) $lon))
                         ->pluck('location_name')
                         ->values(),
-                    'battery_pct'    => $latest?->battery_pct,
+                    // The latest reading from any report (also no-fix ones); older trackers only
+                    // carried it with positions, so fall back to the last position's reading.
+                    'battery_pct'    => $f->tracker_battery_pct ?? $latest?->battery_pct,
+                    'battery_reported_at' => $f->tracker_battery_pct !== null
+                        ? $f->tracker_battery_at
+                        : ($latest?->battery_pct !== null ? ($latest->received_at ?? $latest->captured_at) : null),
                     // The trip to the assigned destination (TripMonitor); null for older issuances.
                     'destination'    => $destination?->location_name,
                     'trip_stage'     => $destination ? ($tx->trip_stage ?? Transaction::TRIP_AT_CAMP) : null,

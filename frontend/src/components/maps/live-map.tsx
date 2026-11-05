@@ -14,6 +14,7 @@ import { useMapMountKey } from "./use-map-mount-key";
 import { MapResizeObserver } from "./map-resize-observer";
 import { TILE_ATTRIBUTION, TILE_DARKEN_CLASS, TILE_MAX_ZOOM, TILE_URL } from "./tiles";
 import { RoadTrailLayer, TrailModeToggle, useRoadTrail, useTrailMode, type TrailFix } from "./road-trail";
+import { BatteryDetails } from "@/components/gps/battery-status";
 
 // Fix default Leaflet icon paths under bundlers like Webpack / Turbopack
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -100,6 +101,8 @@ interface LiveItem {
   /** Zones the shown position falls in; empty means outside all of them. */
   zones?: string[];
   battery_pct?: number | null;
+  /** When that battery reading arrived (with a position or a no-fix report). */
+  battery_reported_at?: string | null;
   /** The trip to the assigned destination; null for issuances from before destinations. */
   destination?: string | null;
   trip_stage?: TripStage | null;
@@ -431,25 +434,7 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
                     </div>
                   )}
 
-                  {item.battery_pct != null && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-steel-400">Battery</span>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-12 h-1.5 bg-steel-800 rounded-full overflow-hidden border border-steel-700/60">
-                          <div
-                            className={cn(
-                              "h-full rounded-full",
-                              item.battery_pct > 20 ? "bg-emerald-500" : "bg-red-500"
-                            )}
-                            style={{ width: `${Math.max(4, Math.min(100, item.battery_pct))}%` }}
-                          />
-                        </div>
-                        <span className={cn("font-mono text-[10px] font-semibold", item.battery_pct > 20 ? "text-steel-300" : "text-red-400")}>
-                          {item.battery_pct}%
-                        </span>
-                      </div>
-                    </div>
-                  )}
+                  <BatteryDetails pct={item.battery_pct} reportedAt={item.battery_reported_at} />
 
                   <div className="flex justify-between items-center">
                     <span className="text-steel-400">Telemetry</span>

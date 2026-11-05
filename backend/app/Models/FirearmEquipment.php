@@ -47,6 +47,8 @@ class FirearmEquipment extends Model
         'acquisition_cost'      => 'decimal:2',
         'condition_status'      => 'integer',
         'availability_status'   => 'integer',
+        'tracker_battery_pct'   => 'integer',
+        'tracker_battery_at'    => 'datetime',
     ];
 
     protected $appends = ['condition_label', 'availability_label'];

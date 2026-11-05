@@ -3,10 +3,11 @@
 import { useState, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ShieldCheck, AlertTriangle, Search, X, ChevronDown, ChevronUp, Battery, User } from "lucide-react";
+import { ArrowLeft, ShieldCheck, AlertTriangle, Search, X, ChevronDown, ChevronUp, User } from "lucide-react";
 import { api } from "@/lib/api";
 import { fmtRelative, cn } from "@/lib/utils";
 import { TRIP_STAGE_LABEL, type TripStage } from "@/lib/trip";
+import { BatteryBadge, BatteryDetails } from "@/components/gps/battery-status";
 
 const LiveMap = dynamic(() => import("@/components/maps/live-map").then((m) => m.LiveMap), { ssr: false });
 const RouteHistoryMap = dynamic(() => import("@/components/maps/route-history-map").then((m) => m.RouteHistoryMap), { ssr: false });
@@ -316,14 +317,7 @@ export default function GpsPage() {
 
                       {/* Right: Battery, Geofence Alert, More details toggle */}
                       <div className="flex items-center gap-2.5 shrink-0">
-                        {i.battery_pct != null && (
-                          <div className="flex items-center gap-1">
-                            <Battery className={cn("h-3.5 w-3.5", i.battery_pct > 20 ? "text-steel-400" : "text-red-400")} />
-                            <span className={cn("font-mono text-[10px] font-semibold", i.battery_pct > 20 ? "text-steel-300" : "text-red-400")}>
-                              {i.battery_pct}%
-                            </span>
-                          </div>
-                        )}
+                        <BatteryBadge pct={i.battery_pct} />
                         {(i.needs_attention ?? i.inside_geofence === false) && (
                           <span title="Needs attention" className="inline-flex text-amber-400">
                             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -384,30 +378,7 @@ export default function GpsPage() {
                             </div>
                           )}
 
-                          {i.battery_pct != null && (
-                            <div className="flex justify-between items-center">
-                              <span className="text-steel-400">Battery Level</span>
-                              <div className="flex items-center gap-2">
-                                <div className="w-16 h-1.5 bg-steel-800 rounded-full overflow-hidden border border-steel-700/60">
-                                  <div
-                                    className={cn(
-                                      "h-full rounded-full transition-all",
-                                      i.battery_pct > 20 ? "bg-emerald-500" : "bg-red-500"
-                                    )}
-                                    style={{ width: `${Math.max(4, Math.min(100, i.battery_pct))}%` }}
-                                  />
-                                </div>
-                                <span
-                                  className={cn(
-                                    "font-mono text-[10px] font-semibold min-w-[28px] text-right",
-                                    i.battery_pct > 20 ? "text-steel-300" : "text-red-400"
-                                  )}
-                                >
-                                  {i.battery_pct}%
-                                </span>
-                              </div>
-                            </div>
-                          )}
+                          <BatteryDetails pct={i.battery_pct} reportedAt={i.battery_reported_at} label="Battery Level" />
 
                           {i.telemetry_source !== "placeholder" && (
                             <div className="flex justify-between items-center">
