@@ -3,17 +3,22 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Wrench, Loader2, Calendar, AlertTriangle, CheckCircle, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Wrench, Loader2, Calendar, AlertTriangle, CheckCircle, X, ChevronLeft, ChevronRight, Hammer } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { fmtDate, fmtPeso, wholePesoInput, CONDITIONS, MAINTENANCE_RESULTS } from "@/lib/utils";
 import { DataError } from "@/components/ui/data-error";
+import { RepairRequests } from "@/components/maintenance/repair-requests";
+import { useAuthStore, hasRole } from "@/store/auth";
 
 export default function MaintenancePage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [centavosHint, setCentavosHint] = useState(false);
-  const [tab, setTab] = useState<"history" | "schedule">("history");
+  const user = useAuthStore((s) => s.user);
+  // Repair and maintenance are the Armory Custodian's job; the others follow the records.
+  const canRecord = hasRole(user, "Armory Custodian");
+  const [tab, setTab] = useState<"repairs" | "history" | "schedule">("repairs");
   const [page, setPage] = useState(1);
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -31,6 +36,7 @@ export default function MaintenancePage() {
     description: "",
     maintenance_date: new Date().toISOString().slice(0, 10),
     next_schedule: "",
+    // Repairs go through the approval on the Repairs tab, not this form.
     maintenance_type: "Inspection",
     result_status: 1,
     // Kept as text so typing replaces the leading 0 ("0" then "1" gives "1", not "01").
@@ -70,11 +76,21 @@ export default function MaintenancePage() {
         <div>
           <h1 className="text-2xl font-bold text-olive-50 flex items-center gap-2"><Wrench className="h-5 w-5 text-olive-300" /> Maintenance</h1>
         </div>
-        <button onClick={() => setShowForm((s) => !s)} className="btn-primary"><Plus className="h-4 w-4" /> New Record</button>
+        {canRecord && tab !== "repairs" && (
+          <button onClick={() => setShowForm((s) => !s)} className="btn-primary"><Plus className="h-4 w-4" /> New Record</button>
+        )}
       </div>
 
       {/* Tab switcher */}
-      <div className="flex gap-1">
+      <div className="flex gap-1 flex-wrap">
+        <button
+          onClick={() => setTab("repairs")}
+          className={`px-4 py-2 rounded-md text-xs uppercase tracking-widest transition-all ${
+            tab === "repairs" ? "bg-olive-700/40 text-olive-100 border border-olive-500/40" : "text-steel-400 hover:text-olive-200"
+          }`}
+        >
+          <Hammer className="h-3.5 w-3.5 inline mr-1.5" /> Repairs
+        </button>
         <button
           onClick={() => setTab("history")}
           className={`px-4 py-2 rounded-md text-xs uppercase tracking-widest transition-all ${
@@ -118,7 +134,7 @@ export default function MaintenancePage() {
                     <label className="text-xs text-steel-400 mb-1 block">Type <span className="text-red-400">*</span></label>
                     <select className="input-field w-full h-[42px]" value={form.maintenance_type}
                             onChange={(e) => setForm({ ...form, maintenance_type: e.target.value })}>
-                      <option>Inspection</option><option>Repair</option><option>Cleaning</option><option>Calibration</option>
+                      <option>Inspection</option><option>Cleaning</option><option>Calibration</option>
                     </select>
                   </div>
                 </div>
@@ -192,6 +208,8 @@ export default function MaintenancePage() {
         document.body
       )}
 
+      {tab === "repairs" && <RepairRequests />}
+
       {/* Schedule Tab */}
       {tab === "schedule" && (
         <div className="glass rounded-xl p-4">
@@ -256,7 +274,7 @@ export default function MaintenancePage() {
                 <th className="text-center">Type</th>
                 <th className="text-center px-3">Description</th>
                 <th className="text-center">Status After</th>
-                <th className="text-center">Tech</th>
+                <th className="text-center">Done By</th>
                 <th className="text-center">Cost</th>
               </tr>
             </thead>
@@ -304,8 +322,16 @@ export default function MaintenancePage() {
                     </span>
                   </td>
                   <td className="text-center text-xs text-steel-300 whitespace-nowrap">
-                    {m.technician?.rank ? `${m.technician.rank} ` : ""}
-                    {m.technician?.first_name} {m.technician?.last_name}
+                    {m.repaired_by ? (
+                      <span title={`Recorded by ${[m.technician?.rank, m.technician?.first_name, m.technician?.last_name].filter(Boolean).join(" ")}`}>
+                        {m.repaired_by}
+                      </span>
+                    ) : (
+                      <>
+                        {m.technician?.rank ? `${m.technician.rank} ` : ""}
+                        {m.technician?.first_name} {m.technician?.last_name}
+                      </>
+                    )}
                   </td>
                   <td className="text-center font-mono text-xs text-steel-300 whitespace-nowrap">
                     {Number(m.cost) > 0 ? fmtPeso(m.cost) : "—"}

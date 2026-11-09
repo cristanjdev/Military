@@ -95,7 +95,7 @@ class SecurityNotificationTest extends TestCase
 
     public function test_account_changes_by_an_officer_are_announced_to_the_account_owner(): void
     {
-        Sanctum::actingAs($this->user('cmd.officer'));
+        Sanctum::actingAs($this->user('admin'));
         $target = $this->user('cpl.santos');
 
         $this->patchJson("/api/v1/users/{$target->user_id}", ['email' => 'new.santos@10rcdg.mil.ph', 'rank' => 'SGT'])->assertOk();

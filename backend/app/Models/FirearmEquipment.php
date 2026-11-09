@@ -76,6 +76,11 @@ class FirearmEquipment extends Model
             ->first();
     }
 
+    public function repairs(): HasMany
+    {
+        return $this->hasMany(RepairRequest::class, 'equipment_id', 'equipment_id');
+    }
+
     public function maintenanceRecords(): HasMany
     {
         return $this->hasMany(MaintenanceRecord::class, 'equipment_id', 'equipment_id');

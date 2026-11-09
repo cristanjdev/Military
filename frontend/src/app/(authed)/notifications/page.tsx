@@ -28,6 +28,13 @@ const TYPE_LABELS: Record<string, string> = {
   camp_exit_after_return: "Left Camp After Return",
   battery_low: "Low Battery",
   battery_critical: "Battery Critical",
+  repair_reported: "Reported for Repair",
+  repair_forwarded: "Repair Needs Approval",
+  repair_approved: "Repair Approved",
+  repair_rejected: "Repair Rejected",
+  repair_cleared: "Repair Cleared",
+  repair_sent: "Sent for Repair",
+  repair_returned: "Back from Maintenance",
 };
 
 /** Filter groups for the client's notification categories. */
@@ -36,6 +43,7 @@ const GROUPS: { key: string; label: string; types?: string[] }[] = [
   { key: "account", label: "Sign-ins & Account", types: ["failed_login", "new_login", "account_change", "account_locked", "password_reset"] },
   { key: "tracker", label: "GPS & IoT Tracker", types: ["signal_lost", "signal_restored", "iot_device_online", "geofence_violation", "geofence_return", "battery_low", "battery_critical"] },
   { key: "trip", label: "Trips & Destinations", types: ["trip_left_camp", "trip_arrived", "trip_left_destination", "trip_returned", "premature_departure", "off_route", "camp_exit_after_return"] },
+  { key: "repair", label: "Repairs", types: ["repair_reported", "repair_forwarded", "repair_approved", "repair_rejected", "repair_cleared", "repair_sent", "repair_returned"] },
 ];
 
 function typeLabel(type: string): string {

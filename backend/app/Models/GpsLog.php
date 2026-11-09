@@ -15,6 +15,7 @@ class GpsLog extends Model
 
     protected $fillable = [
         'transaction_id',
+        'repair_id',
         'equipment_id',
         'captured_at',
         'received_at',

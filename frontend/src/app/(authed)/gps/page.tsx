@@ -311,7 +311,7 @@ export default function GpsPage() {
                           )}
                           title={i.assigned_to ?? "Unassigned"}
                         >
-                          {i.assigned_to ?? "Unassigned"}
+                          {i.repair ? `For repair: ${i.assigned_to}` : i.assigned_to ?? "Unassigned"}
                         </span>
                       </div>
 
@@ -357,7 +357,7 @@ export default function GpsPage() {
                       >
                         <div className="space-y-1.5">
                           <div className="flex justify-between items-center">
-                            <span className="text-steel-400">Personnel</span>
+                            <span className="text-steel-400">{i.repair ? "Received for Repair" : "Personnel"}</span>
                             <span className="text-steel-200 font-medium truncate max-w-[170px] text-right" title={i.assigned_to ?? "Unassigned"}>
                               {i.assigned_to ?? "Unassigned"}
                             </span>

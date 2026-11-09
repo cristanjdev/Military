@@ -13,10 +13,10 @@ import { useAuthStore } from "@/store/auth";
 
 export default function UsersPage() {
   const qc = useQueryClient();
-  // A Command Officer manages every account except Administrator ones (the API enforces this too).
+  // Only the Administrator manages accounts; the Command Officer views them (the API enforces this too).
   const me = useAuthStore((s) => s.user);
   const isAdmin = me?.role === "Administrator";
-  const canTouch = (u: any) => isAdmin || u.role?.role_name !== "Administrator";
+  const canTouch = (_u: any) => isAdmin;
   const [deactivateTarget, setDeactivateTarget] = useState<any | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<any | null>(null);
@@ -119,7 +119,11 @@ export default function UsersPage() {
         <div>
           <h1 className="text-2xl font-bold text-olive-50 flex items-center gap-2"><UsersIcon className="h-5 w-5 text-olive-300" /> User Management</h1>
         </div>
-        <button onClick={() => { resetForm(); setShowForm((s) => !s); }} className="btn-primary"><Plus className="h-4 w-4" /> New User</button>
+        {isAdmin ? (
+          <button onClick={() => { resetForm(); setShowForm((s) => !s); }} className="btn-primary"><Plus className="h-4 w-4" /> New User</button>
+        ) : (
+          <p className="text-xs text-steel-400">View only. The Administrator manages accounts.</p>
+        )}
       </div>
 
       {showForm && createPortal(
@@ -259,7 +263,7 @@ export default function UsersPage() {
                       ><Trash2 className="h-3.5 w-3.5" /></button>
                     </div>
                   ) : (
-                    <span className="text-[10px] text-steel-500" title="Only an Administrator can change Administrator accounts.">Admin only</span>
+                    <span className="text-[10px] text-steel-500" title="Only the Administrator manages accounts.">View only</span>
                   )}
                 </td>
               </tr>

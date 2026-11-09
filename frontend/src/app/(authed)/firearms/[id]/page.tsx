@@ -36,6 +36,7 @@ import { DataError } from "@/components/ui/data-error";
 import { useAuthStore, hasRole } from "@/store/auth";
 import { PasswordConfirmModal } from "@/components/ui/password-confirm-modal";
 import { EditFirearmModal } from "@/components/firearms/edit-firearm-modal";
+import { ReleaseHistory } from "@/components/firearms/release-history";
 
 export default function FirearmDetailPage() {
   const router = useRouter();
@@ -43,8 +44,8 @@ export default function FirearmDetailPage() {
   const user = useAuthStore((s) => s.user);
   // Issue / return buttons: only the Armory Custodian releases and receives firearms.
   const canManage = hasRole(user, "Administrator", "Armory Custodian");
-  // Edit / delete the record: the inventory roles the API allows.
-  const canEditInventory = hasRole(user, "Administrator", "Command Officer", "S4 Officer", "Armory Custodian");
+  // Edit / delete the record: the inventory roles the API allows (the Command Officer only views).
+  const canEditInventory = hasRole(user, "Administrator", "S4 Officer", "Armory Custodian");
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -606,6 +607,8 @@ export default function FirearmDetailPage() {
           </table>
         </div>
       </div>
+
+      {data.transactions !== undefined && <ReleaseHistory firearm={data} />}
 
       {/* Dedicated Print-Only View for Thermal / Label Printing */}
       <div className="hidden print:block print:p-6 print:m-auto print:max-w-md print:text-black">

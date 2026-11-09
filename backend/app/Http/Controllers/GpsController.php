@@ -6,6 +6,7 @@ use App\Models\FirearmEquipment;
 use App\Models\GpsLocation;
 use App\Models\GpsLog;
 use App\Models\Notification;
+use App\Models\RepairRequest;
 use App\Models\Transaction;
 use App\Services\AuditLogger;
 use App\Services\TrackerBattery;
@@ -115,6 +116,13 @@ class GpsController extends Controller
                     ->first();
 
                 if (! $activeTransaction) {
+                    // Out for repair: the firearm stays tracked while it is away (defense feedback, 2026-11).
+                    $repair = RepairRequest::where('equipment_id', $firearm->equipment_id)
+                        ->where('status', RepairRequest::STATUS_IN_REPAIR)
+                        ->first();
+                    if ($repair && (int) $firearm->availability_status === FirearmEquipment::STATUS_MAINTENANCE) {
+                        return $this->recordRepairPosition($firearm, $repair, $data, $capturedAt, $insideAny, $signatureHeader);
+                    }
                     return response()->json(['message' => 'No active firearm transaction accepts GPS updates.'], 409);
                 }
                 if (! $activeTransaction->gps_tracking_enabled) {
@@ -238,6 +246,54 @@ class GpsController extends Controller
     }
 
     /**
+     * A position from a firearm that is out for repair. It is stored against the repair so the
+     * Command Officer can see where the firearm is; the trip and geofence alerts belong to
+     * issuances and are not raised here.
+     */
+    private function recordRepairPosition(
+        FirearmEquipment $firearm,
+        RepairRequest $repair,
+        array $data,
+        CarbonImmutable $capturedAt,
+        bool $insideAny,
+        string $signatureHeader,
+    ): JsonResponse {
+        $latestDeviceLog = GpsLog::where('device_id', $data['device_id'])
+            ->latest('captured_at')
+            ->lockForUpdate()
+            ->first();
+        if ($latestDeviceLog && $capturedAt->lte($latestDeviceLog->captured_at)) {
+            return response()->json(['message' => 'Duplicate or out-of-order GPS update.'], 409);
+        }
+
+        $log = GpsLog::create([
+            'repair_id'          => $repair->repair_id,
+            'equipment_id'       => $firearm->equipment_id,
+            'captured_at'        => $capturedAt,
+            'received_at'        => now(),
+            'latitude'           => $data['latitude'],
+            'longitude'          => $data['longitude'],
+            'accuracy_meters'    => $data['accuracy_meters'] ?? null,
+            'speed_mps'          => $data['speed_mps'] ?? null,
+            'heading_deg'        => $data['heading_deg'] ?? null,
+            'altitude_meters'    => $data['altitude_meters'] ?? null,
+            'satellites'         => $data['satellites'] ?? null,
+            'battery_pct'        => $data['battery_pct'] ?? null,
+            'is_inside_geofence' => $insideAny,
+            'device_id'          => $data['device_id'],
+            'signature'          => substr($signatureHeader, 0, 128),
+        ]);
+        TrackerBattery::record($firearm->equipment_id, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null);
+
+        return response()->json([
+            'ok'              => true,
+            'gps_log_id'      => $log->gps_log_id,
+            'inside_geofence' => $insideAny,
+            'repair_id'       => $repair->repair_id,
+        ]);
+    }
+
+    /**
      * IoT STATUS — called by the ESP32 while it has no position to send (no fix yet, GPS wiring
      * fault). The body carries the status line it prints on USB, e.g. "[gps] no fix yet
      * (satellites in view=15, used=3)". Signed like ingest. Nothing is stored in the database:
@@ -322,15 +378,25 @@ class GpsController extends Controller
 
         $zones = GpsLocation::all();
 
-        $items = FirearmEquipment::with(['currentLocation', 'category'])
-            ->whereIn('availability_status', [
-                FirearmEquipment::STATUS_CHECKED_OUT,
-                FirearmEquipment::STATUS_OVERDUE,
-            ])
+        $inRepair = fn($q) => $q->where('status', RepairRequest::STATUS_IN_REPAIR);
+        $items = FirearmEquipment::with(['currentLocation', 'category', 'repairs' => $inRepair])
+            ->where(fn($q) => $q
+                ->whereIn('availability_status', [
+                    FirearmEquipment::STATUS_CHECKED_OUT,
+                    FirearmEquipment::STATUS_OVERDUE,
+                ])
+                // Out for repair: still tracked while it is away.
+                ->orWhere(fn($m) => $m
+                    ->where('availability_status', FirearmEquipment::STATUS_MAINTENANCE)
+                    ->whereHas('repairs', $inRepair)))
             ->get()
             ->map(function (FirearmEquipment $f) use ($freshAfter, $zones) {
-                $latest = $f->latestGps();
                 $tx     = $f->activeTransaction();
+                $repair = $tx ? null : $f->repairs->first();
+                // Out for repair, only the positions sent since it left count.
+                $latest = $repair
+                    ? $repair->gpsLogs()->latest('captured_at')->first()
+                    : $f->latestGps();
                 $location = $f->currentLocation;
 
                 $lastReceived = $latest?->received_at ?? $latest?->captured_at;
@@ -362,7 +428,8 @@ class GpsController extends Controller
                 // neither the camp nor the destination, or being outside the camp after the return.
                 $destination = $tx ? $zones->firstWhere('location_id', $tx->destination_location_id) : null;
                 $tripPlace = null;
-                $needsAttention = $latest?->is_inside_geofence === false;
+                // At the repair shop, being outside every zone is expected.
+                $needsAttention = ! $repair && $latest?->is_inside_geofence === false;
                 if ($destination && $lat !== null && $telemetrySource !== 'placeholder') {
                     $tripPlace = TripMonitor::placeOf((float) $lat, (float) $lon, $destination, $zones);
                     $tripPlace = str_starts_with($tripPlace, 'other:') ? 'other' : $tripPlace;
@@ -376,7 +443,14 @@ class GpsController extends Controller
                     'model'          => $f->model,
                     'status'         => $f->availability_label,
                     'condition'      => $f->condition_label,
-                    'assigned_to'    => $tx ? optional($tx->user)->fullName() : null,
+                    'assigned_to'    => $tx ? optional($tx->user)->fullName() : $repair?->received_by,
+                    // Set while the firearm is out for repair: who received it there, and since when.
+                    'repair'         => $repair ? [
+                        'repair_id'        => $repair->repair_id,
+                        'received_by'      => $repair->received_by,
+                        'received_by_unit' => $repair->received_by_unit,
+                        'sent_at'          => $repair->sent_at,
+                    ] : null,
                     'transaction_id' => optional($tx)->transaction_id,
                     'expected_return'=> optional($tx)->expected_return_at,
                     'lat'            => $lat,

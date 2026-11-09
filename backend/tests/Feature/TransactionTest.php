@@ -200,4 +200,57 @@ class TransactionTest extends TestCase
         $this->getJson("/api/v1/transactions/{$other->transaction_id}")
             ->assertNotFound();
     }
+
+    /** An issuance to pvt.dela.cruz that is still open. */
+    private function openIssuance(): Transaction
+    {
+        $firearm = FirearmEquipment::where('availability_status', FirearmEquipment::STATUS_AVAILABLE)->first();
+        $tx = Transaction::create([
+            'equipment_id'       => $firearm->equipment_id,
+            'user_id'            => User::where('username', 'pvt.dela.cruz')->value('user_id'),
+            'authorized_by'      => User::where('username', 'armory.custodian')->value('user_id'),
+            'checkout_at'        => now(),
+            'expected_return_at' => now()->addHours(4),
+            'purpose'            => Transaction::PURPOSE_TRAINING,
+            'status'             => Transaction::STATUS_ACTIVE,
+            'condition_on_issue' => FirearmEquipment::CONDITION_GOOD,
+        ]);
+        $firearm->update(['availability_status' => FirearmEquipment::STATUS_CHECKED_OUT]);
+        return $tx;
+    }
+
+    public function test_a_person_holding_a_firearm_cannot_be_deleted(): void
+    {
+        $tx = $this->openIssuance();
+        $admin = User::where('username', 'admin')->first();
+        $admin->forceFill(['password' => \Illuminate\Support\Facades\Hash::make('Correct#Pass1')])->save();
+        Sanctum::actingAs($admin);
+
+        $message = $this->deleteJson("/api/v1/users/{$tx->user_id}", ['password' => 'Correct#Pass1'])
+            ->assertStatus(422)
+            ->json('message');
+        $this->assertStringContainsString('PVT Juan Dela Cruz still holds', $message);
+        $this->assertStringContainsString($tx->firearm->serial_number, $message);
+        $this->assertStringContainsString('before deleting the account', $message);
+        $this->assertNotSoftDeleted('users', ['user_id' => $tx->user_id]);
+    }
+
+    public function test_a_firearm_held_by_a_deleted_account_keeps_its_holder_and_can_be_returned(): void
+    {
+        $tx = $this->openIssuance();
+        User::find($tx->user_id)->delete(); // deleted before the guard above existed
+
+        $this->actAsArmorer();
+        $this->getJson("/api/v1/transactions/{$tx->transaction_id}")
+            ->assertOk()
+            ->assertJsonPath('user.first_name', 'Juan')
+            ->assertJsonPath('user.last_name', 'Dela Cruz');
+        $this->getJson('/api/v1/transactions?search=Dela Cruz')
+            ->assertOk()
+            ->assertJsonFragment(['transaction_id' => $tx->transaction_id]);
+
+        $this->patchJson("/api/v1/transactions/{$tx->transaction_id}/return", ['condition_on_return' => 2])
+            ->assertOk()
+            ->assertJsonPath('status', 'Returned');
+    }
 }

@@ -16,7 +16,7 @@ import { BiometricConfirmHost } from "@/components/biometric/biometric-confirm-h
 const ROUTE_ROLES: Record<string, string[] | "*"> = {
   "/dashboard":     "*",
   "/firearms":      ["Administrator", "Command Officer", "S4 Officer", "Armory Custodian", "Personnel"],
-  "/firearms/new":  ["Administrator", "Command Officer", "S4 Officer", "Armory Custodian"],
+  "/firearms/new":  ["Administrator", "S4 Officer", "Armory Custodian"],
   "/scan":          ["Administrator", "Command Officer", "S4 Officer", "Armory Custodian"],
   "/transactions":  ["Administrator", "Command Officer", "S4 Officer", "Armory Custodian", "Personnel"],
   "/transactions/new": ["Administrator", "Armory Custodian"],

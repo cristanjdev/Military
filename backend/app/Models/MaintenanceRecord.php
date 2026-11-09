@@ -26,6 +26,7 @@ class MaintenanceRecord extends Model
     protected $fillable = [
         'equipment_id',
         'performed_by',
+        'repaired_by',
         'description',
         'maintenance_date',
         'next_schedule',
@@ -56,6 +57,6 @@ class MaintenanceRecord extends Model
 
     public function technician(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'performed_by', 'user_id');
+        return $this->belongsTo(User::class, 'performed_by', 'user_id')->withTrashed();
     }
 }

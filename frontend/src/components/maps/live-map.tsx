@@ -92,6 +92,8 @@ interface LiveItem {
   status: string;
   condition: string;
   assigned_to?: string | null;
+  // Set while the firearm is out for repair (still tracked while it is away).
+  repair?: { repair_id: number; received_by: string; received_by_unit?: string | null; sent_at?: string | null } | null;
   expected_return?: string | null;
   lat: number;
   lon: number;
@@ -418,7 +420,7 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
 
                   {item.assigned_to && (
                     <div className="flex justify-between items-center">
-                      <span className="text-steel-400">Issued To</span>
+                      <span className="text-steel-400">{item.repair ? "Received for Repair" : "Issued To"}</span>
                       <span className="text-steel-200 font-medium truncate max-w-[150px] text-right" title={item.assigned_to}>
                         {item.assigned_to}
                       </span>

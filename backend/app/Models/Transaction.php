@@ -64,14 +64,16 @@ class Transaction extends Model
         return $this->belongsTo(FirearmEquipment::class, 'equipment_id', 'equipment_id');
     }
 
+    /* withTrashed: an archived (deleted) account stays on its issuances, so the history keeps
+     * the name and a firearm it still held can be returned. */
     public function user(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'user_id', 'user_id');
+        return $this->belongsTo(User::class, 'user_id', 'user_id')->withTrashed();
     }
 
     public function authorizer(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'authorized_by', 'user_id');
+        return $this->belongsTo(User::class, 'authorized_by', 'user_id')->withTrashed();
     }
 
     public function destination(): BelongsTo

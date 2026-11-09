@@ -516,7 +516,10 @@ export default function ScanPage() {
                     <div className={canRelease ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"}>
                       {canRelease && (
                         <button
-                          onClick={() => router.push(`/transactions/new?equipment_id=${hit.equipment_id}`)}
+                          onClick={() => router.push(isCheckedOut
+                            // A checked-out firearm is returned from its open issuance in the ledger.
+                            ? `/transactions?equipment_id=${hit.equipment_id}`
+                            : `/transactions/new?equipment_id=${hit.equipment_id}`)}
                           className="btn-primary text-xs py-2 flex items-center justify-center gap-1.5"
                         >
                           <span>{isCheckedOut ? "Process Return" : "Issue Firearm"}</span>

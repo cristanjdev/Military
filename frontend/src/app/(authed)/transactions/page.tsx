@@ -404,6 +404,7 @@ function TransactionsContent() {
                 <span className="text-steel-400">Personnel</span>
                 <p className="text-olive-100">
                   {returnTarget?.user?.first_name} {returnTarget?.user?.last_name}
+                  {returnTarget?.user?.deleted_at && <span className="text-steel-400"> (deleted account)</span>}
                 </p>
               </div>
             </div>

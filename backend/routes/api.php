@@ -10,6 +10,7 @@ use App\Http\Controllers\GpsLocationController;
 use App\Http\Controllers\LogisticsRequestController;
 use App\Http\Controllers\MaintenanceController;
 use App\Http\Controllers\NotificationController;
+use App\Http\Controllers\RepairRequestController;
 use App\Http\Controllers\ReportController;
 use App\Http\Controllers\SettingsController;
 use App\Http\Controllers\TransactionController;
@@ -97,13 +98,16 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
             Route::post('firearms/lookup', [FirearmController::class, 'lookup']);
         });
 
-        // Inventory and maintenance records. The Command Officer oversees the whole system.
-        Route::middleware('role:Administrator,Command Officer,S4 Officer,Armory Custodian')->group(function () {
+        // Inventory. The Command Officer only views and tracks (defense feedback, 2026-11).
+        Route::middleware('role:Administrator,S4 Officer,Armory Custodian')->group(function () {
             Route::post('firearms',                  [FirearmController::class, 'store']);
             Route::patch('firearms/{id}',            [FirearmController::class, 'update']);
             Route::delete('firearms/{id}',           [FirearmController::class, 'destroy']);
-            Route::post('maintenance',               [MaintenanceController::class, 'store']);
         });
+
+        // Repair and maintenance are the Armory Custodian's job.
+        Route::post('maintenance', [MaintenanceController::class, 'store'])
+            ->middleware('role:Armory Custodian');
 
         // Releasing and receiving firearms: the Armory Custodian's job (Administrator as system account).
         Route::middleware('role:Administrator,Armory Custodian')->group(function () {
@@ -118,7 +122,7 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
 
         // The issuance's destination: the Armory Custodian and the roles above it.
         Route::patch('transactions/{id}/destination', [TransactionController::class, 'changeDestination'])
-            ->middleware('role:Administrator,Command Officer,Armory Custodian');
+            ->middleware('role:Administrator,Armory Custodian');
 
         Route::middleware('role:Administrator,Command Officer,S4 Officer,Armory Custodian,Personnel')->group(function () {
             Route::get('transactions',      [TransactionController::class, 'index']);
@@ -127,6 +131,24 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
 
         Route::get('maintenance', [MaintenanceController::class, 'index'])
             ->middleware('role:Administrator,Command Officer,S4 Officer,Armory Custodian');
+
+        // Repair approval: Custodian reports → S4 forwards → Command Officer decides → S4 informs the
+        // Custodian → Custodian sends it for repair and records its return (RepairRequestController).
+        Route::middleware('role:Administrator,Command Officer,S4 Officer,Armory Custodian')->group(function () {
+            Route::get('repairs',      [RepairRequestController::class, 'index']);
+            Route::get('repairs/{id}', [RepairRequestController::class, 'show']);
+        });
+        Route::middleware('role:Armory Custodian')->group(function () {
+            Route::post('repairs',                [RepairRequestController::class, 'store']);
+            Route::patch('repairs/{id}/send',     [RepairRequestController::class, 'send']);
+            Route::patch('repairs/{id}/complete', [RepairRequestController::class, 'complete']);
+        });
+        Route::middleware('role:S4 Officer')->group(function () {
+            Route::patch('repairs/{id}/forward', [RepairRequestController::class, 'forward']);
+            Route::patch('repairs/{id}/inform',  [RepairRequestController::class, 'inform']);
+        });
+        Route::patch('repairs/{id}/decide', [RepairRequestController::class, 'decide'])
+            ->middleware('role:Command Officer');
 
         // S4 Officer requests (new firearms, repair budget); only the Command Officer decides.
         Route::middleware('role:Administrator,Command Officer,S4 Officer')->group(function () {
@@ -139,19 +161,21 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
             ->middleware('role:Command Officer');
 
         // Geofence/location writes
-        Route::middleware('role:Administrator,Command Officer,S4 Officer')->group(function () {
+        Route::middleware('role:Administrator,S4 Officer')->group(function () {
             Route::post('locations',           [GpsLocationController::class, 'store']);
             Route::patch('locations/{id}',     [GpsLocationController::class, 'update']);
             Route::delete('locations/{id}',    [GpsLocationController::class, 'destroy']);
         });
 
-        // User management — Administrator and Command Officer. UserController keeps
-        // Administrator accounts out of a Command Officer's reach.
+        // User management. The Command Officer views the accounts but no longer assigns
+        // personnel (defense feedback, 2026-11); the Administrator manages them.
         Route::middleware('role:Administrator,Command Officer')->group(function () {
             Route::get('users',                [UserController::class, 'index']);
             Route::get('users/roles',          [UserController::class, 'roles']);
-            Route::post('users',               [UserController::class, 'store']);
             Route::get('users/{id}',           [UserController::class, 'show']);
+        });
+        Route::middleware('role:Administrator')->group(function () {
+            Route::post('users',               [UserController::class, 'store']);
             Route::patch('users/{id}',         [UserController::class, 'update']);
             Route::delete('users/{id}',        [UserController::class, 'destroy']);
             Route::post('users/{id}/reset-mfa',[UserController::class, 'resetMfa']);

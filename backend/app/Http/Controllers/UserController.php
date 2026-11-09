@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Role;
+use App\Models\Transaction;
 use App\Models\User;
 use App\Services\AccountNotifier;
 use App\Services\AuditLogger;
@@ -118,6 +119,19 @@ class UserController extends Controller
         $this->assertMayManage($request, $user);
         if ($refused = $this->confirmPassword($request, "delete user {$user->username}")) {
             return $refused;
+        }
+
+        // A person still holding a firearm must return it first, or the issuance loses its holder.
+        $held = Transaction::with('firearm')
+            ->where('user_id', $user->user_id)
+            ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
+            ->get();
+        if ($held->isNotEmpty()) {
+            $serials = $held->map(fn($tx) => $tx->firearm?->serial_number)->filter()->implode(', ');
+            return response()->json([
+                'message' => "{$user->fullName()} still holds {$serials}. Return "
+                    . ($held->count() > 1 ? 'these firearms' : 'the firearm') . ' before deleting the account.',
+            ], 422);
         }
 
         $user->update(['status' => User::STATUS_INACTIVE]);

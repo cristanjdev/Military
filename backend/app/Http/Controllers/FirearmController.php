@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\FirearmEquipment;
+use App\Models\RepairRequest;
 use App\Models\Role;
 use App\Models\Transaction;
 use App\Services\AuditLogger;
@@ -61,6 +62,11 @@ class FirearmController extends Controller
             $relations['transactions'] = fn($query) => $query->latest('checkout_at');
             $relations[] = 'transactions.user';
             $relations[] = 'transactions.authorizer';
+            // Who maintained it, and when it was released from maintenance (defense feedback, 2026-11).
+            $relations['repairs'] = fn($query) => $query->with(RepairRequest::withPeople())->latest('reported_at');
+            $relations['maintenanceRecords'] = fn($query) => $query
+                ->with('technician:user_id,rank,first_name,last_name,deleted_at')
+                ->latest('maintenance_date');
         }
 
         $firearm = FirearmEquipment::with($relations)

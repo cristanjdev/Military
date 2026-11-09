@@ -16,6 +16,8 @@ interface TransactionPerson {
   username?: string;
   phone?: string | null;
   email?: string | null;
+  /** Set when the account was deleted (archived); the issuance keeps the person. */
+  deleted_at?: string | null;
 }
 
 interface TransactionFirearm {
@@ -97,7 +99,8 @@ const COLUMNS: Array<{ key: TransactionSortKey; label: string }> = [
 
 function personName(person?: TransactionPerson | null): string {
   if (!person) return "Unknown";
-  return [person.first_name, person.last_name].filter(Boolean).join(" ");
+  const name = [person.first_name, person.last_name].filter(Boolean).join(" ");
+  return person.deleted_at ? `${name} (deleted account)` : name;
 }
 
 function statusClass(status: TransactionStatus): string {

@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Models\FirearmEquipment;
 use App\Models\MaintenanceRecord;
+use App\Models\RepairRequest;
 use App\Services\AuditLogger;
+use App\Services\MaintenanceOutcome;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -26,12 +28,22 @@ class MaintenanceController extends Controller
             'description'       => ['required', 'string', 'max:500'],
             'maintenance_date'  => ['required', 'date'],
             'next_schedule'     => ['nullable', 'date', 'after:maintenance_date'],
-            'maintenance_type'  => ['required', 'string', 'in:Inspection,Repair,Cleaning,Calibration'],
+            'maintenance_type'  => ['required', 'string', 'in:Inspection,Cleaning,Calibration'],
             'result_status'     => ['required', 'integer', 'in:' . implode(',', array_keys(MaintenanceRecord::RESULT_LABELS))],
             'cost'              => ['nullable', 'integer', 'min:0'],
             'parts_replaced'    => ['nullable', 'array'],
             'remarks'           => ['nullable', 'string', 'max:500'],
         ]);
+
+        // A repair needs the Command Officer's approval, so it goes through the repair request
+        // (RepairRequestController); this form is for routine work done in the armory.
+        $inRepair = RepairRequest::where('equipment_id', $data['equipment_id'])
+            ->where('status', RepairRequest::STATUS_IN_REPAIR)->exists();
+        if ($inRepair) {
+            return response()->json([
+                'message' => 'This firearm is out for repair. Record the result when it comes back from maintenance.',
+            ], 409);
+        }
 
         return DB::transaction(function () use ($request, $data) {
             $record = MaintenanceRecord::create([
@@ -39,26 +51,10 @@ class MaintenanceController extends Controller
                 'performed_by' => $request->user()->user_id,
             ]);
 
-            // The result decides whether the firearm can be issued again. A firearm that is
-            // still out with someone keeps its checked-out/overdue status.
+            // The result decides whether the firearm can be issued again.
             $firearm = FirearmEquipment::find($data['equipment_id']);
             if ($firearm) {
-                $update = ['next_maintenance_due' => $data['next_schedule'] ?? null];
-
-                $update['condition_status'] = match ((int) $data['result_status']) {
-                    MaintenanceRecord::RESULT_SERVICEABLE => min($firearm->condition_status ?: FirearmEquipment::CONDITION_GOOD, FirearmEquipment::CONDITION_GOOD),
-                    MaintenanceRecord::RESULT_NEEDS_REPAIR => FirearmEquipment::CONDITION_FAIR,
-                    default => FirearmEquipment::CONDITION_POOR,
-                };
-
-                $isOut = in_array((int) $firearm->availability_status, [FirearmEquipment::STATUS_CHECKED_OUT, FirearmEquipment::STATUS_OVERDUE], true);
-                if (!$isOut) {
-                    $update['availability_status'] = (int) $data['result_status'] === MaintenanceRecord::RESULT_SERVICEABLE
-                        ? FirearmEquipment::STATUS_AVAILABLE
-                        : FirearmEquipment::STATUS_MAINTENANCE;
-                }
-
-                $firearm->update($update);
+                MaintenanceOutcome::apply($firearm, (int) $data['result_status'], $data['next_schedule'] ?? null);
             }
 
             AuditLogger::log(

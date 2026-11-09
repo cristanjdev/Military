@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\FirearmEquipment;
 use App\Models\GpsLocation;
 use App\Models\Notification;
+use App\Models\RepairRequest;
 use App\Models\Role;
 use App\Models\Transaction;
 use App\Models\User;
@@ -130,6 +131,16 @@ class TransactionController extends Controller
                 return response()->json([
                     'message' => 'Firearm is not available for issuance.',
                     'current_status' => $firearm->availability_label,
+                ], 409);
+            }
+
+            // A firearm reported for repair stays in the armory until the repair is decided.
+            $repair = RepairRequest::where('equipment_id', $firearm->equipment_id)
+                ->whereIn('status', RepairRequest::OPEN_STATUSES)->first();
+            if ($repair) {
+                return response()->json([
+                    'message' => "{$firearm->serial_number} is reported for repair (#{$repair->repair_id}, {$repair->status_label}) and cannot be issued.",
+                    'current_status' => $repair->status_label,
                 ], 409);
             }
 

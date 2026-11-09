@@ -69,7 +69,7 @@ export function LocateFirearmModal({ transaction, onClose }: { transaction: Tran
   const [newDestination, setNewDestination] = useState("");
   const destination = position?.destination ?? transaction.destination?.location_name ?? null;
   const stage = position?.trip_stage ?? transaction.trip_stage ?? null;
-  const canChangeDestination = hasRole(user, "Administrator", "Command Officer", "Armory Custodian")
+  const canChangeDestination = hasRole(user, "Administrator", "Armory Custodian")
     && destinationChangeable(destination ? stage : null);
   const changeDestination = useMutation({
     mutationFn: async () => api.patch(`/transactions/${transaction.transaction_id}/destination`, {

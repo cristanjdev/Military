@@ -77,7 +77,7 @@ class ClientRevisionTest extends TestCase
 
         $this->postJson('/api/v1/maintenance', [
             'equipment_id'     => $firearm->equipment_id,
-            'maintenance_type' => 'Repair',
+            'maintenance_type' => 'Inspection',
             'result_status'    => MaintenanceRecord::RESULT_NEEDS_REPAIR,
             'maintenance_date' => now()->toDateString(),
             'description'      => 'Extractor worn, part on order.',
@@ -90,7 +90,7 @@ class ClientRevisionTest extends TestCase
 
         $this->postJson('/api/v1/maintenance', [
             'equipment_id'     => $firearm->equipment_id,
-            'maintenance_type' => 'Repair',
+            'maintenance_type' => 'Inspection',
             'result_status'    => MaintenanceRecord::RESULT_SERVICEABLE,
             'maintenance_date' => now()->toDateString(),
             'description'      => 'Extractor replaced, function check passed.',
@@ -159,32 +159,30 @@ class ClientRevisionTest extends TestCase
         $this->assertStringNotContainsString('1000.40', $html);
     }
 
-    public function test_command_officer_reaches_user_management_inventory_and_geofences(): void
+    public function test_command_officer_views_user_management_inventory_and_geofences(): void
     {
         $this->actAs('cmd.officer');
 
         $this->getJson('/api/v1/users')->assertOk();
         $this->getJson('/api/v1/maintenance')->assertOk();
-        $this->postJson('/api/v1/locations', [])->assertStatus(422); // reached validation, not 403
-        $this->postJson('/api/v1/firearms', [])->assertStatus(422);
+        $this->getJson('/api/v1/locations')->assertOk();
+        // View only since the defense feedback (2026-11): no geofence, inventory or account changes.
+        $this->postJson('/api/v1/locations', [])->assertForbidden();
+        $this->postJson('/api/v1/firearms', [])->assertForbidden();
     }
 
-    public function test_command_officer_cannot_touch_administrator_accounts(): void
+    public function test_command_officer_no_longer_manages_any_account(): void
     {
         $this->actAs('cmd.officer');
         $admin     = User::where('username', 'admin')->first();
-        $adminRole = Role::where('role_name', Role::ADMIN)->first();
         $personnel = User::where('username', 'pvt.dela.cruz')->first();
 
-        $this->patchJson("/api/v1/users/{$admin->user_id}", ['first_name' => 'X'])->assertForbidden();
-        $this->deleteJson("/api/v1/users/{$admin->user_id}")->assertForbidden();
-        $this->postJson("/api/v1/users/{$admin->user_id}/reset-mfa")->assertForbidden();
-        $this->patchJson("/api/v1/users/{$personnel->user_id}", [
-            'role_id' => $adminRole->role_id, 'security_clearance' => 3,
-        ])->assertForbidden();
-
-        // Everyone else is fair game.
-        $this->patchJson("/api/v1/users/{$personnel->user_id}", ['phone' => '09170000000'])->assertOk();
+        foreach ([$admin, $personnel] as $target) {
+            $this->patchJson("/api/v1/users/{$target->user_id}", ['phone' => '09170000000'])->assertForbidden();
+            $this->deleteJson("/api/v1/users/{$target->user_id}")->assertForbidden();
+            $this->postJson("/api/v1/users/{$target->user_id}/reset-mfa")->assertForbidden();
+        }
+        $this->postJson('/api/v1/users', [])->assertForbidden();
     }
 
     public function test_command_officer_still_cannot_change_system_settings(): void
@@ -267,7 +265,7 @@ class ClientRevisionTest extends TestCase
 
     public function test_an_overdue_firearm_cannot_be_deleted(): void
     {
-        $officer = $this->actAs('cmd.officer');
+        $officer = $this->actAs('admin');
         $password = $this->withPassword($officer);
         $firearm = $this->availableFirearm();
         $firearm->update(['availability_status' => FirearmEquipment::STATUS_OVERDUE]);
@@ -304,7 +302,7 @@ class ClientRevisionTest extends TestCase
 
     public function test_deleting_a_user_needs_the_correct_password(): void
     {
-        $officer = $this->actAs('cmd.officer');
+        $officer = $this->actAs('admin');
         $password = $this->withPassword($officer);
         $target = User::where('username', 'cpl.santos')->firstOrFail();
 
@@ -314,17 +312,23 @@ class ClientRevisionTest extends TestCase
         $this->assertNotSoftDeleted('users', ['user_id' => $target->user_id]);
         $this->assertDatabaseHas('audit_logs', ['action' => 'password_confirm_failed', 'user_id' => $officer->user_id]);
 
+        // The seed issues him a firearm; a holder cannot be deleted until it is returned.
+        $this->deleteJson("/api/v1/users/{$target->user_id}", ['password' => $password])->assertStatus(422);
+        Transaction::where('user_id', $target->user_id)
+            ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
+            ->update(['status' => Transaction::STATUS_RETURNED, 'actual_return_at' => now()]);
+
         $this->deleteJson("/api/v1/users/{$target->user_id}", ['password' => $password])->assertOk();
         $this->assertSoftDeleted('users', ['user_id' => $target->user_id]);
 
         $log = AuditLog::where('action', 'user_delete')->latest('log_id')->first();
-        $this->assertSame('Command Officer', $log->role);
+        $this->assertSame('Administrator', $log->role);
         $this->assertSame('cpl.santos', $log->metadata['deleted']['username']);
     }
 
     public function test_deleting_a_firearm_or_geofence_needs_the_password(): void
     {
-        $officer = $this->actAs('cmd.officer');
+        $officer = $this->actAs('admin');
         $password = $this->withPassword($officer);
         $firearm = $this->availableFirearm();
         $zone = GpsLocation::firstOrFail();
@@ -341,7 +345,7 @@ class ClientRevisionTest extends TestCase
 
     public function test_edits_are_logged_with_before_and_after_values(): void
     {
-        $this->actAs('cmd.officer');
+        $this->actAs('admin');
         $firearm = $this->availableFirearm();
         $oldModel = $firearm->model;
 
@@ -360,7 +364,7 @@ class ClientRevisionTest extends TestCase
 
     public function test_audit_trail_is_signed_and_verifies_intact(): void
     {
-        $this->actAs('cmd.officer');
+        $this->actAs('admin');
         $this->patchJson('/api/v1/firearms/' . $this->availableFirearm()->equipment_id, ['remarks' => 'checked'])->assertOk();
 
         $log = AuditLog::latest('log_id')->first();
@@ -372,7 +376,7 @@ class ClientRevisionTest extends TestCase
 
     public function test_the_database_refuses_to_change_or_delete_audit_entries(): void
     {
-        $this->actAs('cmd.officer');
+        $this->actAs('admin');
         $this->patchJson('/api/v1/firearms/' . $this->availableFirearm()->equipment_id, ['remarks' => 'x'])->assertOk();
         $id = AuditLog::max('log_id');
 
@@ -393,7 +397,7 @@ class ClientRevisionTest extends TestCase
 
     public function test_verification_catches_an_edited_or_deleted_entry(): void
     {
-        $this->actAs('cmd.officer');
+        $this->actAs('admin');
         foreach (['a', 'b', 'c'] as $remark) {
             $this->patchJson('/api/v1/firearms/' . $this->availableFirearm()->equipment_id, ['remarks' => $remark])->assertOk();
         }

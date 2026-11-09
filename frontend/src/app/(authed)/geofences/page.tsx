@@ -32,7 +32,7 @@ interface GpsLocation {
 export default function GeofencesPage() {
   const qc = useQueryClient();
   const user = useAuthStore((s) => s.user);
-  const canManage = hasRole(user, "Administrator", "Command Officer", "S4 Officer");
+  const canManage = hasRole(user, "Administrator", "S4 Officer");
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<GpsLocation | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GpsLocation | null>(null);

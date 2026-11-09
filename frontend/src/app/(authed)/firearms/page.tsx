@@ -30,7 +30,7 @@ export default function FirearmsPage() {
   const [status, setStatus] = useState<string>("");
   const [showRegister, setShowRegister] = useState(false);
   const user = useAuthStore((s) => s.user);
-  const canCreate = hasRole(user, "Administrator", "Command Officer", "S4 Officer", "Armory Custodian");
+  const canCreate = hasRole(user, "Administrator", "S4 Officer", "Armory Custodian");
   const qc = useQueryClient();
 
   const { data, isLoading, isError, refetch } = useQuery({

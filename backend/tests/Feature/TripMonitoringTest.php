@@ -222,7 +222,12 @@ class TripMonitoringTest extends TestCase
         $this->patchJson("/api/v1/transactions/{$tx->transaction_id}/destination", ['destination_location_id' => $outpost])
             ->assertForbidden();
 
+        // The Command Officer only views since the defense feedback (2026-11).
         $this->actAs('cmd.officer');
+        $this->patchJson("/api/v1/transactions/{$tx->transaction_id}/destination", ['destination_location_id' => $outpost])
+            ->assertForbidden();
+
+        $this->actAs('armory.custodian');
         $this->patchJson("/api/v1/transactions/{$tx->transaction_id}/destination", ['destination_location_id' => $outpost])
             ->assertOk()->assertJsonPath('destination.location_name', 'Barangay Outpost');
 
