@@ -226,14 +226,10 @@
   font-family: var(--font-inter), system-ui, -apple-system, sans-serif !important;
 }
 
-/* Live map firearm card: never taller than the map minus its chips, buttons and the marker
-   (live-map.tsx makes the map a size container); on a short screen it scrolls inside. */
+/* Live map firearm card: wide and two-column (live-map.tsx), so it shows in full without scrolling.
+   Its width follows the map's (the map is a size container), never wider than the map. */
 .leaflet-container .live-map-popup .leaflet-popup-content {
-  max-height: max(180px, calc(100cqh - 150px));
-  overflow-x: hidden !important;
-  overflow-y: auto !important;
-  scrollbar-width: thin;
-  scrollbar-color: #3a4a55 transparent;
+  overflow: visible !important;
 }
 
 .leaflet-container .leaflet-popup-tip-container,

@@ -36,7 +36,50 @@ export function BatteryBadge({ pct, absent = false }: { pct: number | null | und
   );
 }
 
-/** Bar, percentage, level, voltage and the time of the reading, for the details panel and the map popup. */
+/**
+ * The wide map card's battery: everything on one row (level, then a short explanation, voltage and
+ * age). On a narrow card the explanation ends in "…" and the full wording shows on hover.
+ */
+export function BatterySummary({
+  pct,
+  mv,
+  absent = false,
+  reportedAt,
+}: {
+  pct: number | null | undefined;
+  mv?: number | null;
+  absent?: boolean;
+  reportedAt?: string | null;
+}) {
+  const level = batteryLevel(pct, absent);
+  const ago = reportedAt ? fmtRelative(reportedAt) : null;
+  const short = absent
+    ? ["USB power or battery off", volts(mv), ago]
+    : pct == null
+    ? ["Tracker has not sent a level"]
+    : [volts(mv), ago];
+  const full = absent
+    ? ["USB power, or the battery is off or not connected", volts(mv), ago && `reported ${ago}`]
+    : pct == null
+    ? ["The tracker has not sent a battery level"]
+    : [volts(mv), ago && `reported ${ago}`];
+  return (
+    <div className="flex items-center gap-2 min-w-0 whitespace-nowrap" title={`${level.label} · ${full.filter(Boolean).join(" · ")}`}>
+      <level.Icon className={cn("h-3.5 w-3.5 shrink-0", level.text)} />
+      {!absent && pct != null && (
+        <div className="w-16 h-1.5 shrink-0 bg-steel-800 rounded-full overflow-hidden border border-steel-700/60">
+          <div className={cn("h-full rounded-full transition-all", level.bar)} style={{ width: `${Math.max(4, Math.min(100, pct))}%` }} />
+        </div>
+      )}
+      <span className={cn("shrink-0 text-[12px] font-semibold", level.text)}>
+        {!absent && pct != null ? `${pct}% · ${level.label}` : level.label}
+      </span>
+      <span className="min-w-0 truncate text-[10px] text-steel-500">· {short.filter(Boolean).join(" · ")}</span>
+    </div>
+  );
+}
+
+/** Bar, percentage, level, voltage and the time of the reading, for the details panel. */
 export function BatteryDetails({
   pct,
   mv,

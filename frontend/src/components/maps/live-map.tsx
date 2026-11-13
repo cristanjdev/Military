@@ -9,12 +9,12 @@ import Link from "next/link";
 import { ArrowRight, Crosshair, LocateFixed, ShieldAlert } from "lucide-react";
 import { api } from "@/lib/api";
 import { fmtRelative, cn } from "@/lib/utils";
-import { TRIP_STAGE_LABEL, type TripStage } from "@/lib/trip";
+import type { TripStage } from "@/lib/trip";
 import { useMapMountKey } from "./use-map-mount-key";
 import { MapResizeObserver } from "./map-resize-observer";
 import { TILE_ATTRIBUTION, TILE_DARKEN_CLASS, TILE_MAX_ZOOM, TILE_URL } from "./tiles";
 import { RoadTrailLayer, TrailModeToggle, useRoadTrail, useTrailMode, type TrailFix } from "./road-trail";
-import { BatteryDetails } from "@/components/gps/battery-status";
+import { BatterySummary } from "@/components/gps/battery-status";
 
 // Fix default Leaflet icon paths under bundlers like Webpack / Turbopack
 delete (L.Icon.Default.prototype as any)._getIconUrl;
@@ -160,6 +160,30 @@ function InitialFit({ points }: { points: [number, number][] }) {
   }, [points, map]);
 
   return null;
+}
+
+/**
+ * One labelled value in the firearm card's two-column grid; long values end in "…" (full text on hover).
+ * `wide` spans both columns, for values that are usually long (zone and destination names).
+ */
+function CardField({
+  label,
+  sub,
+  wide = false,
+  children,
+}: {
+  label: string;
+  sub?: string;
+  wide?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn("min-w-0", wide && "col-span-2")}>
+      <div className="text-[10px] text-steel-500 mb-0.5">{label}</div>
+      <div className="text-[12px] font-medium text-steel-200 truncate">{children}</div>
+      {sub && <div className="text-[10px] text-steel-400 truncate">{sub}</div>}
+    </div>
+  );
 }
 
 /** Space kept clear under the status chips and above the bottom buttons (follow, trail mode). */
@@ -397,15 +421,16 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
               popupclose: () => setOpenCardId((open) => (open === item.equipment_id ? null : open)),
             }}
           >
-            {/* Following frames the card itself (FollowTarget); Leaflet's own auto-pan would fight it. */}
-            <Popup className="tactical-popup live-map-popup" minWidth={255} maxWidth={275} autoPan={false}>
+            {/* Following frames the card itself (FollowTarget); Leaflet's own auto-pan would fight it.
+                Wide and in two columns so the whole card fits without scrolling. */}
+            <Popup className="tactical-popup live-map-popup" minWidth={240} maxWidth={480} autoPan={false}>
               <div
                 style={{ backgroundColor: "#131a20", color: "#f1f5f9" }}
-                className="w-[260px] p-3 text-steel-100 font-sans text-xs select-text rounded-md"
+                className="w-[min(460px,calc(100cqw-24px))] p-3.5 text-steel-100 font-sans text-xs select-text rounded-md"
               >
-                {/* Header Row: Title, Badge, and Close Button aligned horizontally */}
-                <div className="flex items-center gap-2 pr-7 h-5">
-                  <h4 className="m-0 font-bold text-xs text-steel-100 truncate tracking-tight leading-none min-w-0">
+                {/* Header: name, status and serial number on one line */}
+                <div className="flex items-center gap-2 pr-7 pb-2.5 border-b border-steel-800 min-w-0">
+                  <h4 className="m-0 font-bold text-[13px] text-steel-100 truncate tracking-tight leading-none min-w-0">
                     {item.model}
                   </h4>
                   <span
@@ -422,75 +447,44 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
                   >
                     {item.status}
                   </span>
-                </div>
-
-                {/* Subtitle: Serial Number */}
-                <div className="mt-1 pb-2 border-b border-steel-800">
-                  <p className="font-mono text-[10px] text-steel-400 font-medium leading-none">
+                  <span className="ml-auto shrink-0 font-mono text-[10px] text-steel-400 leading-none">
                     SN {item.serial_number}
-                  </p>
+                  </span>
                 </div>
 
-                {/* Formal Key-Value Specs */}
-                <div className="space-y-1.5 py-2 text-[11px]">
+                {/* Details in two columns */}
+                <div className="grid grid-cols-2 gap-x-5 gap-y-2.5 py-3">
                   {item.zones && item.telemetry_source !== "placeholder" && (
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="text-steel-400">Zone</span>
+                    <CardField label="Zone" wide>
                       {item.zones.length > 0 ? (
-                        <span className="text-emerald-300 font-medium truncate text-right" title={item.zones.join(", ")}>
-                          {item.zones.join(", ")}
-                        </span>
+                        <span className="text-emerald-300" title={item.zones.join(", ")}>{item.zones.join(", ")}</span>
                       ) : item.destination && !item.needs_attention ? (
-                        <span className="text-steel-300 font-medium">Between zones</span>
+                        <span className="text-steel-300">Between zones</span>
                       ) : (
                         <span className="text-red-300 font-semibold">Outside all zones</span>
                       )}
-                    </div>
+                    </CardField>
                   )}
 
-                  {item.destination && (
-                    <div className="flex justify-between items-center gap-2">
-                      <span className="text-steel-400">Destination</span>
-                      <span className="text-steel-200 font-medium truncate text-right" title={item.destination}>
-                        {item.destination}
-                        {item.trip_stage && (
-                          <span className="block text-[10px] text-steel-400 font-normal">{TRIP_STAGE_LABEL[item.trip_stage]}</span>
-                        )}
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="flex justify-between items-center">
-                    <span className="text-steel-400">Condition</span>
-                    <span className="text-steel-200 font-medium">{item.condition}</span>
-                  </div>
+                  <CardField label="Condition">{item.condition}</CardField>
 
                   {item.assigned_to && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-steel-400">{item.repair ? "Received for Repair" : "Issued To"}</span>
-                      <span className="text-steel-200 font-medium truncate max-w-[150px] text-right" title={item.assigned_to}>
-                        {item.assigned_to}
-                      </span>
-                    </div>
+                    <CardField label={item.repair ? "Received for Repair" : "Issued To"}>
+                      <span title={item.assigned_to}>{item.assigned_to}</span>
+                    </CardField>
                   )}
 
                   {item.device_id && (
-                    <div className="flex justify-between items-center">
-                      <span className="text-steel-400">Device</span>
-                      <span className="font-mono text-[10px] text-steel-300 bg-steel-800/80 px-1.5 py-0.5 rounded border border-steel-700/60">
-                        {item.device_id}
-                      </span>
-                    </div>
+                    <CardField label="Device">
+                      <span className="font-mono text-[11px] text-steel-300">{item.device_id}</span>
+                    </CardField>
                   )}
 
-                  <BatteryDetails pct={item.battery_pct} mv={item.battery_mv} absent={item.battery_absent} reportedAt={item.battery_reported_at} />
-
-                  <div className="flex justify-between items-center">
-                    <span className="text-steel-400">Telemetry</span>
-                    <span className="flex items-center gap-1.5 font-mono text-[10px] text-steel-300">
+                  <CardField label="Telemetry">
+                    <span className="inline-flex items-center gap-1.5 text-steel-300">
                       <span
                         className={cn(
-                          "h-1.5 w-1.5 rounded-full",
+                          "h-1.5 w-1.5 rounded-full shrink-0",
                           item.telemetry_source === "iot"
                             ? "bg-emerald-400"
                             : item.telemetry_source === "stale"
@@ -500,70 +494,80 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
                             : "bg-steel-500"
                         )}
                       />
-                      <span>{telemetryLabel(item.telemetry_source)}</span>
+                      {telemetryLabel(item.telemetry_source)}
                     </span>
+                  </CardField>
+
+                  <div className="col-span-2 min-w-0">
+                    <div className="text-[10px] text-steel-500 mb-0.5">Battery</div>
+                    <BatterySummary pct={item.battery_pct} mv={item.battery_mv} absent={item.battery_absent} reportedAt={item.battery_reported_at} />
                   </div>
 
+                  {item.destination && (
+                    <CardField label="Destination" wide>
+                      <span title={item.destination}>{item.destination}</span>
+                    </CardField>
+                  )}
+
                   {item.location_note && (
-                    <p className="text-[10px] text-steel-400 leading-snug pt-1 border-t border-steel-800/60" title={item.location_note}>
+                    <p className="col-span-2 m-0 text-[10px] text-steel-400 leading-snug">
                       {item.location_note}
                     </p>
                   )}
                 </div>
 
-                {/* Coordinates & Fix Timestamp (never truncated) */}
-                <div className="pt-2 border-t border-steel-800 flex items-center justify-between text-[10px] text-steel-400 font-mono">
-                  <span title={`Lat/Lon: ${item.lat}, ${item.lon}`}>
-                    {Number(item.lat).toFixed(5)}, {Number(item.lon).toFixed(5)}
-                  </span>
-                  {item.captured_at && (
-                    <span className="text-steel-500 text-[10px]">
-                      Fix {fmtRelative(item.captured_at)}
-                    </span>
-                  )}
-                </div>
-
-                {/* Footer Action Buttons - Perfectly consistent in both dimensions */}
-                <div className="pt-2 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (trackedId === item.equipment_id && following) {
-                        setFollowing(false);
-                      } else {
-                        setTrackedId(item.equipment_id);
-                        setFollowing(true);
-                      }
-                    }}
-                    className={cn(
-                      "h-7 flex-1 inline-flex items-center justify-center gap-1 rounded text-[11px] font-medium border transition shadow-sm",
-                      trackedId === item.equipment_id && following
-                        ? "bg-olive-800/90 text-olive-100 border-olive-500/70"
-                        : "bg-steel-800 text-steel-200 border-steel-700 hover:bg-steel-700 hover:text-white"
+                {/* Footer: position and fix time on the left, actions on the right */}
+                <div className="pt-2.5 border-t border-steel-800 flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="min-w-0 mr-auto font-mono text-[10px] leading-tight">
+                    <div className="text-steel-300" title={`Lat/Lon: ${item.lat}, ${item.lon}`}>
+                      {Number(item.lat).toFixed(5)}, {Number(item.lon).toFixed(5)}
+                    </div>
+                    {item.captured_at && (
+                      <div className="text-steel-500">Fix {fmtRelative(item.captured_at)}</div>
                     )}
-                    title={trackedId === item.equipment_id && following ? "Stop following" : "Follow on map"}
-                  >
-                    {trackedId === item.equipment_id && following ? (
-                      <>
-                        <LocateFixed className="h-3 w-3 text-olive-300 shrink-0" />
-                        <span>Following</span>
-                      </>
-                    ) : (
-                      <>
-                        <Crosshair className="h-3 w-3 shrink-0" />
-                        <span>Follow</span>
-                      </>
-                    )}
-                  </button>
+                  </div>
 
-                  <Link
-                    href={`/firearms/${item.equipment_id}`}
-                    className="h-7 flex-1 inline-flex items-center justify-center gap-1.5 rounded text-[11px] font-semibold bg-olive-600 hover:bg-olive-500 active:bg-olive-700 !text-white border border-olive-500/70 shadow-sm transition text-center no-underline"
-                  >
-                    <span className="!text-white">Details</span>
-                    <ArrowRight className="h-3 w-3 !text-white shrink-0" />
-                  </Link>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (trackedId === item.equipment_id && following) {
+                          setFollowing(false);
+                        } else {
+                          setTrackedId(item.equipment_id);
+                          setFollowing(true);
+                        }
+                      }}
+                      className={cn(
+                        "h-7 px-3 inline-flex items-center justify-center gap-1 rounded text-[11px] font-medium border transition shadow-sm",
+                        trackedId === item.equipment_id && following
+                          ? "bg-olive-800/90 text-olive-100 border-olive-500/70"
+                          : "bg-steel-800 text-steel-200 border-steel-700 hover:bg-steel-700 hover:text-white"
+                      )}
+                      title={trackedId === item.equipment_id && following ? "Stop following" : "Follow on map"}
+                    >
+                      {trackedId === item.equipment_id && following ? (
+                        <>
+                          <LocateFixed className="h-3 w-3 text-olive-300 shrink-0" />
+                          <span>Following</span>
+                        </>
+                      ) : (
+                        <>
+                          <Crosshair className="h-3 w-3 shrink-0" />
+                          <span>Follow</span>
+                        </>
+                      )}
+                    </button>
+
+                    <Link
+                      href={`/firearms/${item.equipment_id}`}
+                      className="h-7 px-3 inline-flex items-center justify-center gap-1.5 rounded text-[11px] font-semibold bg-olive-600 hover:bg-olive-500 active:bg-olive-700 !text-white border border-olive-500/70 shadow-sm transition text-center no-underline"
+                    >
+                      <span className="!text-white">Details</span>
+                      <ArrowRight className="h-3 w-3 !text-white shrink-0" />
+                    </Link>
+                  </div>
                 </div>
               </div>
             </Popup>
