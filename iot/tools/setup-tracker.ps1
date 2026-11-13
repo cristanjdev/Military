@@ -28,6 +28,13 @@ $BackendEnv = Join-Path $RepoRoot 'backend\.env'
 $TrackerLog = Join-Path $RepoRoot 'backend\storage\logs\trackers.log'
 $Fqbn       = 'esp32:esp32:esp32'
 $ApiPort    = 8000
+# The online system. In "Online" mode the tracker sends to this server over HTTPS (on any hotspot that has
+# internet), checking its certificate against ROOT_CA_CERT from config.example.h. Flashing is by USB only:
+# the over-Wi-Fi update and the Wi-Fi live status work through the backend on this laptop.
+$OnlineServer = 'https://military-production-2d50.up.railway.app'
+$OnlineSite   = 'militarygps.vercel.app'
+# Windows PowerShell 5.1 does not offer TLS 1.2 by default.
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 # Without a USB cable, Save builds into $BuildDir and leaves the firmware in $FirmwareDir; the backend offers
 # it to the tracker in answer to its next report (App\Services\TrackerFirmware).
 $BuildDir    = Join-Path $env:TEMP 'armory-tracker-build'
@@ -204,6 +211,38 @@ function Test-Backend([string]$Ip) {
     } catch { return $false }
 }
 
+# Online when config.h points at an https:// server (or there is no config.h yet): the last choice sticks.
+function Test-OnlineMode {
+    if (-not (Test-Path $ConfigH)) { return $true }
+    return (Get-ConfigDefine 'API_URL') -like 'https://*'
+}
+
+function Get-HmacHex([string]$Secret, [string]$Body) {
+    $hmac = New-Object System.Security.Cryptography.HMACSHA256 (, [Text.Encoding]::UTF8.GetBytes($Secret))
+    try { return (($hmac.ComputeHash([Text.Encoding]::UTF8.GetBytes($Body)) | ForEach-Object { $_.ToString('x2') }) -join '') }
+    finally { $hmac.Dispose() }
+}
+
+# Is the online server up, and does it accept the IoT secret in backend\.env? A signed empty body proves the
+# secret without storing anything: 422 (fields missing) = secret accepted, 401 = a different secret.
+# State: ok | secret (differs) | nosecret (none in backend\.env) | down (not reached) | http (other answer).
+function Test-OnlineServer {
+    $secret = Get-EnvValue 'IOT_HMAC_SECRET'
+    if (-not $secret) { return @{ State = 'nosecret'; Code = 0 } }
+    $code = 0
+    try {
+        $r = Invoke-WebRequest "$OnlineServer/api/v1/gps/ingest" -Method Post -UseBasicParsing -TimeoutSec 8 `
+            -ContentType 'application/json' -Body '{}' `
+            -Headers @{ 'X-Armory-Signature' = (Get-HmacHex $secret '{}'); Accept = 'application/json' }
+        $code = [int]$r.StatusCode
+    } catch {
+        $resp = $_.Exception.Response
+        if ($resp) { $code = [int]$resp.StatusCode } else { return @{ State = 'down'; Code = 0 } }
+    }
+    $state = $(switch ($code) { 422 { 'ok' } 401 { 'secret' } default { 'http' } })
+    return @{ State = $state; Code = $code }
+}
+
 # XAMPP's MySQL is a manual-start service on this laptop, so it is stopped after every restart, and the
 # backend can store no position without it. $true when it was stopped and has been started.
 function Start-MysqlIfStopped {
@@ -287,13 +326,38 @@ function Set-OrAddDefine([string]$Text, [string]$Key, [string]$Value) {
     return $Text.TrimEnd() + "`r`n`r`n#define $Key $Value`r`n"
 }
 
-function Write-TrackerConfig([string]$Ssid, [string]$Password, [string]$Ip, [int]$EquipmentId, [string]$Build) {
+# The certificate block of config.example.h (ISRG Root X1 + X2), in the line endings of $Like.
+function Get-ExampleCertBlock([string]$Like) {
+    $example = [IO.File]::ReadAllText($ExampleH) -replace "`r`n", "`n"
+    $m = [regex]::Match($example, '(?s)#if USE_HTTPS && !ALLOW_INSECURE_TLS\n.*?\n#endif')
+    if (-not $m.Success -or $m.Value -notmatch 'BEGIN CERTIFICATE-----\\n" \\\n  "MII') {
+        throw 'config.example.h has no ROOT_CA_CERT certificates (update the project: git pull)'
+    }
+    if ($Like -match "`r`n") { return $m.Value -replace "`n", "`r`n" }
+    return $m.Value
+}
+
+function Write-TrackerConfig([string]$Ssid, [string]$Password, [string]$Ip, [int]$EquipmentId, [string]$Build, [bool]$Online) {
     if (-not (Test-Path $ConfigH)) { Copy-Item $ExampleH $ConfigH }
     $text = [IO.File]::ReadAllText($ConfigH)
     $text = Set-Define $text 'WIFI_SSID' (ConvertTo-CString $Ssid)
     $text = Set-Define $text 'WIFI_PASS' (ConvertTo-CString $Password)
-    $text = Set-Define $text 'API_URL' (ConvertTo-CString "http://${Ip}:$ApiPort/api/v1/gps/ingest")
-    $text = Set-Define $text 'USE_HTTPS' '0'
+    if ($Online) {
+        # HTTPS to the online server, with its certificate checked against the roots in config.example.h.
+        $text = Set-Define $text 'API_URL' (ConvertTo-CString "$OnlineServer/api/v1/gps/ingest")
+        $text = Set-Define $text 'USE_HTTPS' '1'
+        $text = Set-OrAddDefine $text 'ALLOW_INSECURE_TLS' '0'
+        $block = Get-ExampleCertBlock $text
+        $current = [regex]::Match($text, '(?s)#if USE_HTTPS && !ALLOW_INSECURE_TLS\r?\n.*?\r?\n#endif')
+        $text = $(if ($current.Success) {
+            $text.Substring(0, $current.Index) + $block + $text.Substring($current.Index + $current.Length)
+        } else {
+            $text.TrimEnd() + "`r`n`r`n" + $block + "`r`n"
+        })
+    } else {
+        $text = Set-Define $text 'API_URL' (ConvertTo-CString "http://${Ip}:$ApiPort/api/v1/gps/ingest")
+        $text = Set-Define $text 'USE_HTTPS' '0'
+    }
     $text = Set-Define $text 'EQUIPMENT_ID' "$EquipmentId"
     # The GPS is wired to D18/D19 (this board has no GPIO16/17 headers); a config.h made from an
     # older template still says 16/17, which reads nothing even under open sky.
@@ -400,6 +464,15 @@ function Watch-Usb([string]$Port) {
 function Watch-Wifi([string]$BusyPort) {
     $device = Get-DeviceId
     $ssid = Get-ConfigDefine 'WIFI_SSID'
+    if (Test-OnlineMode) {
+        # Its reports go to the online server, whose log this laptop cannot read: wait for a USB cable.
+        Write-Host "  Over Wi-Fi, $device reports to the online server: follow it on the GPS page of https://$OnlineSite. Plug it in by USB to see it here." -ForegroundColor Cyan
+        while ($true) {
+            $usb = Get-UsbTracker ''
+            if ($usb -and ($usb -ne $BusyPort -or (-not (Test-PortClaimed) -and (Test-PortFree $BusyPort)))) { return }
+            Start-Sleep -Seconds 2
+        }
+    }
     Write-Host "  Over Wi-Fi: $device reports every 10 s while it waits for a GPS fix, and each position it sends." -ForegroundColor Cyan
     $state = @{}
     $quietSince = Get-Date
@@ -430,7 +503,7 @@ function Start-ConsoleMonitor([string]$Port) {
     Write-Host '  Live tracker status' -ForegroundColor Cyan
     Write-Host '  green = connected / position sent    yellow = waiting for GPS    red = problem' -ForegroundColor DarkGray
     Write-Host '  Comes by USB while the tracker is plugged in, over Wi-Fi otherwise. Ctrl+C stops watching; the tracker keeps running.' -ForegroundColor DarkGray
-    if (Start-MysqlIfStopped) { Write-Host '  MySQL was stopped; started it (positions are stored there).' -ForegroundColor DarkGray }
+    if (-not (Test-OnlineMode) -and (Start-MysqlIfStopped)) { Write-Host '  MySQL was stopped; started it (positions are stored there).' -ForegroundColor DarkGray }
     Write-Host ''
     $busyPort = ''
     while ($true) {
@@ -452,6 +525,14 @@ switch ($Action.ToLower()) {
         $wifi = Get-LaptopWifi
         $ip = Get-LaptopIp
         "arduino-cli : " + $(if (Find-ArduinoCli) { Find-ArduinoCli } else { 'NOT FOUND' })
+        $check = Test-OnlineServer
+        "server mode : " + $(if (Test-OnlineMode) { "online ($OnlineServer)" } else { 'this laptop (local testing)' })
+        "online      : " + $(switch ($check.State) {
+            'ok' { 'reachable, IoT secret matches backend\.env' }
+            'secret' { 'reachable, but it REJECTS the IoT secret in backend\.env' }
+            'nosecret' { 'backend\.env has no IOT_HMAC_SECRET' }
+            'down' { 'not reachable from this laptop' }
+            default { "answered HTTP $($check.Code)" } })
         "laptop Wi-Fi: '$($wifi.Ssid)' ($($wifi.Band))"
         "laptop IP   : $ip"
         "backend     : " + $(if (Test-Backend $ip) { "reachable at http://${ip}:$ApiPort" } else { 'not reachable' })
@@ -677,7 +758,7 @@ $root.Controls.Add($right, 1, 0)
 $brand = New-Label ("{0}  ARMORYDB  {1}  10RCDG" -f $G.Dot, $G.Dot) $FontSmall $C.AccentHover
 $title = New-Label 'GPS tracker setup' $FontTitle $C.Title
 $title.Margin = Pad 0 2 0 0
-$subtitle = Register-Wrap (New-Label 'Connect the ESP32 tracker to the hotspot and this laptop. Plug it in by USB first.' $FontField $C.Muted)
+$subtitle = Register-Wrap (New-Label 'Connect the ESP32 tracker to the hotspot and the server. Plug it in by USB first.' $FontField $C.Muted)
 $subtitle.Margin = Pad 0 2 0 14
 Add-Row $left $brand
 Add-Row $left $title
@@ -698,19 +779,32 @@ Add-Row $card1 $tbPass $chkShow
 $hintPass = New-Hint; Add-Row $card1 $hintPass
 Add-Row $left $card1
 
-# ---- left: 2 This laptop
-$card2 = New-Card '2   This laptop'
-Add-Row $card2 (New-FieldLabel 'IP address on the hotspot (detected automatically)')
+# ---- left: 2 Server
+$card2 = New-Card '2   Server'
+$ServerChoices = @("Online  -  $OnlineSite (any hotspot with internet)", 'This laptop  -  local testing (same hotspot)')
+$cbServer = New-Object System.Windows.Forms.ComboBox; Set-InputStyle $cbServer; $cbServer.DropDownStyle = 'DropDown'
+$cbServer.Margin = Pad 0 8 0 0
+$cbServer.Add_KeyPress({ param($src, $e) $e.Handled = $true })  # pick-only (DropDownList cannot be drawn dark)
+foreach ($choice in $ServerChoices) { [void]$cbServer.Items.Add($choice) }
+Add-Row $card2 $cbServer
+$hintServer = New-Hint; Add-Row $card2 $hintServer
+# "This laptop" only: one panel, so the rows hide together.
+$ipBox = New-Stack 2
+[void]$ipBox.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('Percent', 100)))
+[void]$ipBox.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('AutoSize')))
+Add-Row $ipBox (New-FieldLabel 'This laptop''s IP address on the hotspot (detected automatically)')
 $tbIp = New-Object System.Windows.Forms.TextBox; Set-InputStyle $tbIp
 $btnIp = New-Button 'Detect again'
-Add-Row $card2 $tbIp $btnIp
-$hintLaptop = New-Hint; Add-Row $card2 $hintLaptop
-$hintBackend = New-Hint; Add-Row $card2 $hintBackend
+Add-Row $ipBox $tbIp $btnIp
+$hintLaptop = New-Hint; Add-Row $ipBox $hintLaptop
+$hintBackend = New-Hint; Add-Row $ipBox $hintBackend
+Add-Row $card2 $ipBox
 Add-Row $left $card2
 
 # ---- left: 3 Tracker
 $card3 = New-Card '3   Tracker' 0
-Add-Row $card3 (New-FieldLabel 'Firearm (only firearms with GPS tracking on are listed)')
+$lblFirearm = New-FieldLabel 'Firearm (only firearms with GPS tracking on are listed)'
+Add-Row $card3 $lblFirearm
 $cbFirearm = New-Object System.Windows.Forms.ComboBox; Set-InputStyle $cbFirearm; $cbFirearm.DropDownStyle = 'DropDown'
 Add-Row $card3 $cbFirearm
 $hintFirearm = New-Hint; Add-Row $card3 $hintFirearm
@@ -753,7 +847,7 @@ Add-Row $activity $actHead
 
 # Steps
 $script:steps = @()
-foreach ($stepText in @('Write the settings', 'Build and upload the firmware', 'Check the Wi-Fi connection', 'Check the GPS module', 'Check the link to this laptop')) {
+foreach ($stepText in @('Write the settings', 'Build and upload the firmware', 'Check the Wi-Fi connection', 'Check the GPS module', 'Check the link to the server')) {
     $row = New-Stack 2
     $row.Margin = Pad 0 3 0 3
     [void]$row.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle('AutoSize')))
@@ -902,7 +996,7 @@ function Move-ToCenter {
 
 $form.Add_Resize({
     Update-Wrap
-    foreach ($combo in @($cbSsid, $cbFirearm, $cbPort)) { Clear-ComboHighlight $combo }
+    foreach ($combo in @($cbSsid, $cbFirearm, $cbPort, $cbServer)) { Clear-ComboHighlight $combo }
 })
 
 # ================================================================ window: progress bar
@@ -959,7 +1053,52 @@ function Update-SsidHint {
     Update-Wrap
 }
 
-function Update-LaptopHints {
+# The online server check takes a moment, so it is reused for a minute (Detect again / Save refresh it).
+$script:serverCheck = $null
+function Get-OnlineServerState([switch]$Fresh) {
+    if ($Fresh -or -not $script:serverCheck -or ((Get-Date) - $script:serverCheck.At).TotalSeconds -gt 60) {
+        $check = Test-OnlineServer
+        $check.At = Get-Date
+        $script:serverCheck = $check
+    }
+    return $script:serverCheck
+}
+
+function Update-ServerHint([switch]$Fresh) {
+    $check = Get-OnlineServerState -Fresh:$Fresh
+    switch ($check.State) {
+        'ok'       { Set-Hint $hintServer 'ok' 'The online server answers and accepts the IoT secret. This laptop does not need to be on the hotspot; the hotspot needs mobile data.' }
+        'secret'   { Set-Hint $hintServer 'err' 'The online server rejects the IoT secret in backend\.env. Make IOT_HMAC_SECRET there the same as in Railway (Military > Variables).' }
+        'nosecret' { Set-Hint $hintServer 'err' 'backend\.env has no IOT_HMAC_SECRET. Copy it from Railway (Military > Variables).' }
+        'down'     { Set-Hint $hintServer 'warn' 'This laptop cannot reach the online server (no internet?). The tracker still works if its hotspot has mobile data.' }
+        default    { Set-Hint $hintServer 'warn' "The online server answered HTTP $($check.Code). Check the Railway deployment." }
+    }
+}
+
+# Online or this laptop: shows the fields that apply and refreshes what depends on it.
+function Set-ServerMode([bool]$Online) {
+    $script:online = $Online
+    $cbServer.Text = $ServerChoices[$(if ($Online) { 0 } else { 1 })]
+    Clear-ComboHighlight $cbServer
+    $ipBox.Visible = -not $Online
+    $lblFirearm.Text = $(if ($Online) { 'Firearm number (the end of its page address on the site: /firearms/3 = 3)' } else { 'Firearm (only firearms with GPS tracking on are listed)' })
+    $script:steps[4][1].Text = $(if ($Online) { 'Check the link to the online server' } else { 'Check the link to this laptop' })
+    Update-LaptopHints
+    Update-Firearms
+    Update-Wrap
+    # Rows were shown or hidden: lay the cards out again before measuring the window.
+    foreach ($panel in @($ipBox, $card2, $card3, $left)) { $panel.PerformLayout() }
+    Fit-Height
+}
+
+function Update-LaptopHints([switch]$Fresh) {
+    if ($script:online) {
+        Set-Hint $hintLaptop '' ''; Set-Hint $hintBackend '' ''
+        Update-ServerHint -Fresh:$Fresh
+        Update-Wrap
+        return
+    }
+    Set-Hint $hintServer '' ''
     $ssid = $cbSsid.Text.Trim()
     $laptop = Get-LaptopWifi
     if (-not $laptop.Ssid) {
@@ -1048,6 +1187,11 @@ $script:nextSetupWifiCheck = [datetime]::MinValue
 $script:setupWifiOn = $false
 function Update-TrackerHint {
     if (($cbPort.Text -split '\s')[0] -match '^COM\d+$') { return }  # on USB: "Tracker found on COMx" stays
+    if ($script:online) {
+        Set-Hint $hintPort 'err' 'No tracker found. Plug the ESP32 in by USB (the online setup works by USB only).'
+        Update-Wrap
+        return
+    }
     $ssid = Get-ConfigDefine 'WIFI_SSID'
     $report = Get-LastWifiReport (Get-DeviceId)
     $age = $(if ($report) { [int]((Get-Date) - $report.At).TotalSeconds } else { [int]::MaxValue })
@@ -1077,6 +1221,15 @@ function Update-TrackerHint {
 }
 
 function Update-Firearms {
+    if ($script:online) {
+        # The firearms live in the online database, which this laptop does not read: the number is typed.
+        $cbFirearm.Items.Clear()
+        $cbFirearm.Text = Get-ConfigDefine 'EQUIPMENT_ID'
+        Set-Hint $hintFirearm 'info' 'Positions count only while it is issued with GPS on, or out for repair.'
+        Clear-ComboHighlight $cbFirearm
+        Update-Wrap
+        return
+    }
     $startedMysql = Start-MysqlIfStopped
     $cbFirearm.Items.Clear()
     $list = @(Get-TrackableFirearms)
@@ -1087,7 +1240,7 @@ function Update-Firearms {
     elseif ($list.Count -gt 0) { $cbFirearm.SelectedIndex = 0 }
     else { $cbFirearm.Text = $current }
     if ($list.Count -eq 0) {
-        Set-Hint $hintFirearm 'warn' 'No firearm with GPS tracking on was found (is MySQL running?). The number above is used as typed.'
+        Set-Hint $hintFirearm 'warn' 'No firearm with GPS on found (is MySQL running?); the number is used as typed.'
     } elseif ($startedMysql) {
         Set-Hint $hintFirearm 'info' 'MySQL was stopped, so it was started (positions are stored there).'
     } else {
@@ -1100,6 +1253,19 @@ function Update-Firearms {
 $chkShow.Add_CheckedChanged({ $tbPass.UseSystemPasswordChar = -not $chkShow.Checked })
 $btnScan.Add_Click({ if (-not $script:busy) { Update-Networks; Update-Password; Update-LaptopHints } })
 $btnIp.Add_Click({ if (-not $script:busy) { Update-Ip } })
+$script:settingMode = $false
+$cbServer.Add_SelectedIndexChanged({
+    if ($script:settingMode) { return }
+    $want = $(if ($script:busy) { $script:online } else { $cbServer.SelectedIndex -eq 0 })  # locked while uploading
+    $script:settingMode = $true
+    try {
+        if ($want -eq $script:online) { $cbServer.Text = $ServerChoices[$(if ($want) { 0 } else { 1 })]; Clear-ComboHighlight $cbServer; return }
+        Set-ServerMode $want
+    } finally { $script:settingMode = $false }
+    # Wi-Fi live status reads this laptop's backend log, so it only applies to "This laptop".
+    if ($script:liveSource -eq 'wifi') { Stop-Live }
+    if (-not $script:liveSource -and ($cbPort.Text -split '\s')[0] -notmatch '^COM\d+$') { Start-WifiLive }
+})
 $btnPorts.Add_Click({ if (-not $script:busy) { Update-Ports } })
 $cbSsid.Add_Leave({ Update-SsidHint; Update-Password; Update-LaptopHints })
 $cbSsid.Add_SelectedIndexChanged({ Update-SsidHint; Update-Password; Update-LaptopHints })
@@ -1154,6 +1320,8 @@ $watchTimer.Add_Tick({
 
 # ================================================================ window: flash and verify
 
+$script:online = Test-OnlineMode  # the server card's choice; config.h remembers the last one
+$script:serverUncheckedOk = ''
 $script:proc = $null
 $script:readPos = @{}
 $script:serial = $null
@@ -1187,7 +1355,7 @@ function Set-Busy([bool]$Busy) {
     $btnSave.Text = $(if ($Busy) { "Uploading$($G.Ellipsis)" } elseif ($script:run.Saved) { 'Save again' } else { 'Save to tracker' })
 }
 foreach ($combo in @($cbSsid, $cbFirearm)) { $combo.Add_KeyPress({ param($src, $e) if ($script:busy) { $e.Handled = $true } }) }
-foreach ($combo in @($cbSsid, $cbFirearm, $cbPort)) { $combo.Add_DropDown({ param($src) if ($script:busy) { $src.DroppedDown = $false } }) }
+foreach ($combo in @($cbSsid, $cbFirearm, $cbPort, $cbServer)) { $combo.Add_DropDown({ param($src) if ($script:busy) { $src.DroppedDown = $false } }) }
 
 # The window holds this lock while it uses the tracker's port: from Save until the check ends, and while
 # watching live. Live-status terminals of this tool close the port while it is held (Start-ConsoleMonitor),
@@ -1270,6 +1438,11 @@ $liveTimer.Add_Tick({
 # report in backend\storage\logs\trackers.log.
 function Start-WifiLive {
     Exit-PortLock
+    if ($script:online) {
+        # The tracker reports to the online server, whose log this laptop cannot read.
+        Write-Log "Without USB, follow the tracker on the GPS page of https://$OnlineSite (it reports there over the hotspot). Plug it in by USB to watch it here." $C.Info
+        return
+    }
     $script:liveSource = 'wifi'
     $script:wifiState = @{}
     [void](Read-WifiLines $script:wifiState (Get-DeviceId))  # from now on
@@ -1404,6 +1577,19 @@ $flashTimer.Add_Tick({
 # Topic 'gps' is the GPS module (step 4), 'link' is reaching this laptop (step 5); a [post] line (it has
 # a fix and sent a position) answers both.
 function Get-TrackerVerdict([string]$Line) {
+    if ($script:online) {
+        # Same tracker lines (the firmware calls any server "laptop"), worded for the online server.
+        $noNet = 'does the hotspot have mobile data? (The tracker must reach the internet.)'
+        $badSecret = 'the online server rejects its signature: IOT_HMAC_SECRET in backend\.env differs from Railway (Military > Variables)'
+        if ($Line -match '\[link\] laptop reachable') { return @('link', 'ok', 'it reaches the online server over the hotspot') }
+        if ($Line -match '\[link\] laptop NOT reachable') { return @('link', 'warn', "it cannot reach the online server: $noNet") }
+        if ($Line -match '\[link\] laptop answered HTTP 401') { return @('link', 'err', $badSecret) }
+        if ($Line -match '\[link\] laptop answered HTTP (\d{3})') { return @('link', 'warn', "the online server answered HTTP $($Matches[1]) (check the Railway deployment)") }
+        if ($Line -match '\[post\] HTTP 2\d\d') { return @('post', 'ok', 'the online server accepted its position') }
+        if ($Line -match '\[post\] HTTP 401') { return @('post', 'err', $badSecret) }
+        if ($Line -match '\[post\] transport error') { return @('post', 'warn', "it cannot reach the online server: $noNet") }
+        if ($Line -match '\[post\] HTTP 5\d\d') { return @('post', 'warn', 'the online server had an error (check the Railway deployment)') }
+    }
     $serve = "is the backend running (php artisan serve --host 0.0.0.0 --port $ApiPort) and this laptop on the hotspot?"
     if ($Line -match '\[gps\] NO DATA') { return @('gps', 'warn', 'no data comes from its GPS module: check GPS TX to D18, GND and power (header pins soldered)') }
     if ($Line -match '\[gps\] GARBLED') { return @('gps', 'warn', 'its GPS data is unreadable (wrong speed): find the speed with iot\firmware\gps_baud_finder') }
@@ -1441,7 +1627,9 @@ function Complete-Verify {
         return
     }
     $gps = $(if ($run.Gps) { $run.Gps } else { @('warn', 'its GPS module has not reported yet') })
-    $link = $(if ($run.Link) { $run.Link } else { @('warn', "it has not reported to this laptop yet: is the backend running (php artisan serve --host 0.0.0.0 --port $ApiPort)?") })
+    $link = $(if ($run.Link) { $run.Link }
+        elseif ($script:online) { @('warn', 'it has not reached the online server yet: does the hotspot have mobile data?') }
+        else { @('warn', "it has not reported to this laptop yet: is the backend running (php artisan serve --host 0.0.0.0 --port $ApiPort)?") })
     Set-Step 3 (Get-StepState $run.Gps)
     Set-Step 4 (Get-StepState $run.Link)
     $kinds = @($gps[0], $link[0])
@@ -1532,7 +1720,7 @@ $verifyTimer.Add_Tick({
             Set-Step 3 (Get-StepState $script:run.Gps)
             if (-not $script:run.Link) {
                 Set-Step 4 'running'
-                Set-Stage "GPS module checked. Checking the link to this laptop$($G.Ellipsis)"
+                Set-Stage "GPS module checked. Checking the link to $(if ($script:online) { 'the online server' } else { 'this laptop' })$($G.Ellipsis)"
             }
             $finished = $script:run.Gps -and $script:run.Link
         } elseif ($line -match '\[wifi\] connected\s+ip=(\S+)') {
@@ -1583,13 +1771,29 @@ $btnSave.Add_Click({
         Show-Banner 'warn' "No password for '$ssid'. Type it, or press Save again if this hotspot has none."
         $tbPass.Focus(); return
     }
-    if ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$' -or -not [System.Net.IPAddress]::TryParse($ip, [ref]$parsed)) {
+    $online = [bool]$script:online
+    if (-not $online -and ($ip -notmatch '^\d{1,3}(\.\d{1,3}){3}$' -or -not [System.Net.IPAddress]::TryParse($ip, [ref]$parsed))) {
         Show-Banner 'err' "'$ip' is not a valid IP address. Connect the laptop to the hotspot and press Detect again."; $tbIp.Focus(); return
     }
-    if ($cbFirearm.Text -notmatch '^\s*(\d+)') { Show-Banner 'err' 'Choose the firearm (its number comes first).'; $cbFirearm.Focus(); return }
+    if ($cbFirearm.Text -notmatch '^\s*(\d+)') {
+        Show-Banner 'err' $(if ($online) { 'Type the firearm number.' } else { 'Choose the firearm (its number comes first).' }); $cbFirearm.Focus(); return
+    }
     $equipment = [int]$Matches[1]
     # No USB cable: the firmware goes over Wi-Fi, through the backend, to a tracker that reports there.
     $wifi = $port -notmatch '^COM\d+$'
+    if ($online) {
+        if ($wifi) { Show-Banner 'err' 'Plug the ESP32 in with a USB data cable. With the online server, settings go to the tracker by USB only.'; return }
+        # A tracker flashed with a secret the server rejects would send nothing, so check before flashing.
+        $form.Cursor = [System.Windows.Forms.Cursors]::WaitCursor
+        try { Update-ServerHint -Fresh; Update-Wrap } finally { $form.Cursor = [System.Windows.Forms.Cursors]::Default }
+        $state = $script:serverCheck.State
+        if ($state -in @('secret', 'nosecret')) { Show-Banner 'err' "$($hintServer.Text.Substring(3))"; return }
+        if ($state -ne 'ok' -and $script:serverUncheckedOk -ne $state) {
+            $script:serverUncheckedOk = $state
+            Show-Banner 'warn' 'The online server could not be checked from this laptop (see Server above), so the IoT secret is unconfirmed. Press Save again to flash anyway.'
+            return
+        }
+    }
     if ($wifi) {
         if (-not (Get-LastWifiReport (Get-DeviceId))) {
             Show-Banner 'err' 'No tracker on USB, and none has reported over Wi-Fi yet. Plug the ESP32 in by USB; it is picked up by itself.'
@@ -1639,13 +1843,14 @@ $btnSave.Add_Click({
     Clear-Log
     Set-Step 0 'running'
     try {
-        Write-TrackerConfig $ssid $pass $ip $equipment $build
+        Write-TrackerConfig $ssid $pass $ip $equipment $build $online
     } catch {
         Complete-Run 'err' "Could not write config.h: $($_.Exception.Message)" 0
         return
     }
     Set-Step 0 'done'
-    Write-Log "Settings: Wi-Fi '$ssid', server http://${ip}:$ApiPort, firearm $equipment (build $build)"
+    $server = $(if ($online) { "$OnlineServer (online, HTTPS)" } else { "http://${ip}:$ApiPort" })
+    Write-Log "Settings: Wi-Fi '$ssid', server $server, firearm $equipment (build $build)"
     Write-Log $(if ($wifi) { 'No USB cable: the firmware goes to the tracker over Wi-Fi, through the backend on this laptop.' } else { "Uploading to $port (erases the old settings first)" })
 
     Set-Step 1 'running'
@@ -1693,10 +1898,11 @@ $form.Add_Shown({
     Update-Password
     Update-Ip
     $script:netSignature = Get-NetworkSignature
-    Update-Firearms
+    Set-ServerMode $script:online  # also fills the firearm field
     Update-Wrap
     Fit-Height
     Update-Wrap
+    Fit-Height  # wrapped hints can grow once more
     Move-ToCenter
     $form.Cursor = [System.Windows.Forms.Cursors]::Default
     [void]$tbPass.Focus()

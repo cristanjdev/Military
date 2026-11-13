@@ -286,6 +286,8 @@ How it works:
   seconds sends its position to the backend, signed with IOT_HMAC_SECRET.
   The laptop running the backend must be on the SAME Wi-Fi as the tracker.
   For a field demo that Wi-Fi is the phone's hotspot.
+  (That is for testing on this laptop. With the online system the tracker
+  only needs a hotspot with mobile data - see 5.12.)
 
 Wiring (already done on the demo unit):
     GPS VCC -> ESP32 3V3        GPS TX -> ESP32 D18
@@ -486,6 +488,36 @@ from the project folder.
   If the hotspot password was typed wrong, it simply cannot connect - hold
   BOOT 3 s and enter it again. Settings entered on the phone replace the
   Wi-Fi and address in config.h until they are changed on the phone again.
+
+
+5.12 Use the online system instead of this laptop
+  Online, the tracker sends straight to the server on the internet
+  (https://militarygps.vercel.app shows it). It no longer needs the laptop,
+  or the same Wi-Fi as the laptop: any hotspot with mobile data works.
+
+  Use ONE standard hotspot for every tracker, for example:
+      name: ARMORY-TRK          password: (choose one, 8+ characters)
+  Whoever is issued a firearm turns on their phone's hotspot with exactly
+  that name and password (2.4 GHz, mobile data ON), and keeps the phone
+  within about 10 m. The tracker never needs new settings when the firearm
+  goes to someone else.
+
+  In config.h (from 5.5):
+      #define WIFI_SSID "ARMORY-TRK"
+      #define WIFI_PASS "<the standard hotspot password>"
+      #define API_URL "https://military-production-2d50.up.railway.app/api/v1/gps/ingest"
+      #define USE_HTTPS 1
+      #define ALLOW_INSECURE_TLS 0
+      #define EQUIPMENT_ID <the firearm's number: the end of its page address
+                            on the site, e.g. .../firearms/3 -> 3>
+  Replace the whole "#if USE_HTTPS && !ALLOW_INSECURE_TLS ... #endif" block
+  with the same block from config.example.h (it holds the certificates the
+  tracker checks the server with). HMAC_SECRET must equal IOT_HMAC_SECRET
+  in Railway (Military -> Variables).
+
+  Then do 5.6 (USB). 5.7 shows "[link] laptop reachable at https://..."
+  once it reaches the server (the tracker calls every server "laptop").
+  Without USB, follow it on the GPS page of the site.
 
 
 --------------------------------------------------------------------------------
