@@ -344,6 +344,24 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
   const staleCount = items.filter((i) => i.is_stale).length;
   const liveCount = items.filter((i) => i.telemetry_source === "iot").length;
 
+  /* When the newest real position arrived. The response's own updated_at is only the time of the
+   * poll, which is always seconds old, so it said nothing about the trackers. */
+  const lastFixAt = useMemo(() => {
+    let newest = 0;
+    for (const i of items) {
+      if (i.telemetry_source !== "iot" && i.telemetry_source !== "stale") continue;
+      const at = Date.parse(i.received_at ?? i.captured_at ?? "");
+      if (at > newest) newest = at;
+    }
+    return newest ? new Date(newest) : null;
+  }, [items]);
+  /* Re-render now and then so "12 seconds ago" keeps counting between polls. */
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setClockTick((t) => t + 1), 15_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   if (!mapKey) {
     return (
       <div className="absolute inset-0 flex items-center justify-center text-xs text-steel-400">
@@ -610,9 +628,9 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
           <span className="pill pill-ok bg-steel-900/85">{liveCount} live</span>
           {staleCount > 0 && <span className="pill pill-warn bg-steel-900/85">{staleCount} last known</span>}
           {placeholderCount > 0 && <span className="pill pill-muted bg-steel-900/85">{placeholderCount} placeholder</span>}
-          {data?.updated_at && (
-            <span className="pill pill-muted bg-steel-900/85">updated {fmtRelative(data.updated_at)}</span>
-          )}
+          <span className="pill pill-muted bg-steel-900/85">
+            {lastFixAt ? `last fix ${fmtRelative(lastFixAt)}` : "no GPS fix yet"}
+          </span>
         </div>
       )}
     </div>
