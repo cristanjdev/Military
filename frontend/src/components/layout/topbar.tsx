@@ -241,9 +241,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
         {/* Drawer Header */}
         <div className="h-16 flex items-center justify-between px-5 border-b border-steel-800/60 bg-steel-900/40 shrink-0">
           <div className="flex items-center gap-2.5">
-            <div className="p-1.5 rounded-lg bg-olive-500/10 text-olive-300 border border-olive-500/20">
-              <Bell className="h-4 w-4" />
-            </div>
+            <Bell className="h-4 w-4 text-olive-300 shrink-0" />
             <div className="flex items-center gap-2">
               <h2 className="text-xs uppercase tracking-widest font-bold text-olive-100">Notifications</h2>
               {data?.count && data.count > 0 ? (
@@ -294,9 +292,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
                   {/* Top row: Icon + Title on left, Timestamp + dismiss on right */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
-                      <div className={cn("h-6 w-6 rounded-md border flex items-center justify-center shrink-0", meta.iconBg)}>
-                        <Icon className={cn("h-3.5 w-3.5", meta.iconColor)} />
-                      </div>
+                      <Icon className={cn("h-4 w-4 shrink-0", meta.iconColor)} />
                       <h4 className="text-xs font-semibold text-olive-100 leading-snug truncate">
                         {n.title}
                       </h4>
@@ -345,9 +341,7 @@ export function Topbar({ onMenuClick }: TopbarProps) {
             })
           ) : (
             <div className="h-full flex flex-col items-center justify-center py-20 px-4 text-center">
-              <div className="w-12 h-12 rounded-2xl bg-steel-900/90 border border-olive-700/30 flex items-center justify-center mb-3 text-steel-400 shadow-inner">
-                <BellOff className="h-5 w-5 text-olive-400/60" />
-              </div>
+              <BellOff className="h-6 w-6 text-olive-400/60 mb-3" />
               <h3 className="text-xs font-bold uppercase tracking-wider text-olive-100">All Clear</h3>
               <p className="text-xs text-steel-400 mt-1 max-w-[200px] leading-relaxed">
                 No unread operational notifications or security alerts.
@@ -434,7 +428,6 @@ function getNotificationMeta(n: any) {
     return {
       icon: AlertTriangle,
       iconColor: "text-red-400",
-      iconBg: "bg-red-500/15 border-red-500/30",
       cardBorder: "border-red-500/30 hover:border-red-500/50",
       badgeColor: "bg-red-500/15 text-red-300 border-red-500/30",
     };
@@ -444,7 +437,6 @@ function getNotificationMeta(n: any) {
     return {
       icon: type.includes("password") ? KeyRound : AlertCircle,
       iconColor: "text-amber-400",
-      iconBg: "bg-amber-500/15 border-amber-500/30",
       cardBorder: "border-amber-500/30 hover:border-amber-500/50",
       badgeColor: "bg-amber-500/15 text-amber-300 border-amber-500/30",
     };
@@ -453,7 +445,6 @@ function getNotificationMeta(n: any) {
   return {
     icon: Info,
     iconColor: "text-olive-300",
-    iconBg: "bg-olive-500/15 border-olive-500/30",
     cardBorder: "border-olive-700/30 hover:border-olive-500/40",
     badgeColor: "bg-olive-500/15 text-olive-300 border-olive-500/30",
   };
