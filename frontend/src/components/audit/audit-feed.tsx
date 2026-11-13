@@ -116,6 +116,31 @@ function actorName(user: AuditFeedItem["user"], action: string): string {
   return name || user.username;
 }
 
+/** Plain-language reasons for the backend's sign-in failure descriptions (AuthController). */
+const FAILED_LOGIN_REASONS: [RegExp, string][] = [
+  [/^Failed password for /, "Wrong password"],
+  [/^Invalid TOTP$/, "Wrong authenticator code"],
+  [/^Biometric mismatch$/, "Fingerprint did not match"],
+];
+
+/** Who did it, what they did, and the extra detail line, for one entry. */
+function describe(a: AuditFeedItem): { who: string; phrase: React.ReactNode; detail: string } {
+  if (a.action === "failed_login") {
+    // Nobody signed in to name: the attempt used a username or email that has no account.
+    const unknown = !a.user && a.description.match(/^Unknown username or email (.+)$/);
+    if (unknown) {
+      return { who: `"${unknown[1]}"`, phrase: "failed to sign in", detail: "No account has this username or email" };
+    }
+    const reason = FAILED_LOGIN_REASONS.find(([re]) => re.test(a.description));
+    if (reason) return { who: actorName(a.user, a.action), phrase: PHRASES.failed_login, detail: reason[1] };
+  }
+  return {
+    who: actorName(a.user, a.action),
+    phrase: PHRASES[a.action] ?? <>· {humanizeAuditAction(a.action)}</>,
+    detail: SELF_EXPLANATORY.has(a.action) ? "" : a.description,
+  };
+}
+
 /** "just now", "6 min ago", "3 hr ago", "yesterday", then the date. */
 function shortTime(iso: string): string {
   const at = new Date(iso);
@@ -140,21 +165,19 @@ export function AuditFeed({ items = [], maxHeight = "max-h-[320px]" }: AuditFeed
     <ol className={`overflow-y-auto pr-2 divide-y divide-steel-800/70 ${maxHeight}`}>
       {events.map((a) => {
         const Icon = iconFor(a.action);
-        const phrase = PHRASES[a.action];
-        const who = actorName(a.user, a.action);
-        const detail = SELF_EXPLANATORY.has(a.action) ? "" : a.description;
+        const { who, phrase, detail } = describe(a);
         const when = fmtDate(a.created_at, "MMM d, yyyy h:mm a");
         return (
           <li
             key={a.log_id}
-            className="flex items-start gap-3 py-2.5 first:pt-0"
+            className="flex items-center gap-3 py-2.5 first:pt-0"
             title={[when, a.user?.username && `@${a.user.username}`, a.ip_address && `IP ${a.ip_address}`].filter(Boolean).join(" · ")}
           >
-            <Icon className={`h-4 w-4 mt-px shrink-0 ${toneFor(a.action)}`} aria-hidden />
+            {/* Centred on the title and detail lines together */}
+            <Icon className={`h-4 w-4 shrink-0 ${toneFor(a.action)}`} aria-hidden />
             <div className="min-w-0 flex-1">
               <p className="text-xs leading-snug text-steel-300 break-words">
-                <span className="font-semibold text-olive-100">{who}</span>{" "}
-                {phrase ?? <>· {humanizeAuditAction(a.action)}</>}
+                <span className="font-semibold text-olive-100">{who}</span> {phrase}
               </p>
               {detail && <p className="mt-0.5 text-xs leading-snug text-steel-400 line-clamp-2 break-words">{detail}</p>}
             </div>
