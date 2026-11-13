@@ -34,6 +34,9 @@ Route::prefix('v1')->group(function () {
         ->middleware([RecordTrackerTraffic::class, 'rate.strict:60']);
     Route::post('gps/status', [GpsController::class, 'status'])
         ->middleware([RecordTrackerTraffic::class, 'rate.strict:60']);
+    // Firearms a tracker can be set up for, listed by the setup tool in Online mode.
+    Route::get('gps/trackable', [GpsController::class, 'trackable'])
+        ->middleware('rate.strict:30');
     // Firmware update over Wi-Fi, after a report was answered with an offer (TrackerFirmware).
     Route::get('gps/firmware/{device}', [GpsController::class, 'firmware'])
         ->where('device', '[A-Za-z0-9_.-]{1,64}')

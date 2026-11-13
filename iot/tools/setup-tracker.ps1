@@ -194,6 +194,19 @@ function Get-TrackableFirearms {
     })
 }
 
+# The same list from the online server, which this laptop cannot read directly. Signed with the IoT
+# secret in backend\.env (HMAC of "trackable:<unix time>"). $null when the server could not be asked.
+function Get-OnlineTrackableFirearms {
+    $secret = Get-EnvValue 'IOT_HMAC_SECRET'
+    if (-not $secret) { return $null }
+    $ts = [string][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    try {
+        $r = Invoke-RestMethod "$OnlineServer/api/v1/gps/trackable" -UseBasicParsing -TimeoutSec 8 `
+            -Headers @{ 'X-Armory-Timestamp' = $ts; 'X-Armory-Signature' = (Get-HmacHex $secret "trackable:$ts"); Accept = 'application/json' }
+    } catch { return $null }
+    @($r.items | ForEach-Object { "{0} - {1} {2} ({3})" -f $_.equipment_id, $_.serial_number, $_.model, $_.status })
+}
+
 function Get-ConfigDefine([string]$Key) {
     $file = if (Test-Path $ConfigH) { $ConfigH } else { $ExampleH }
     $m = Select-String -Path $file -Pattern "^#define\s+$Key\s+(.*)$" | Select-Object -First 1
@@ -1081,7 +1094,7 @@ function Set-ServerMode([bool]$Online) {
     $cbServer.Text = $ServerChoices[$(if ($Online) { 0 } else { 1 })]
     Clear-ComboHighlight $cbServer
     $ipBox.Visible = -not $Online
-    $lblFirearm.Text = $(if ($Online) { 'Firearm number (the end of its page address on the site: /firearms/3 = 3)' } else { 'Firearm (only firearms with GPS tracking on are listed)' })
+    $lblFirearm.Text = $(if ($Online) { 'Firearm (issued with GPS tracking on, or out for repair, on the online site)' } else { 'Firearm (only firearms with GPS tracking on are listed)' })
     $script:steps[4][1].Text = $(if ($Online) { 'Check the link to the online server' } else { 'Check the link to this laptop' })
     Update-LaptopHints
     Update-Firearms
@@ -1222,10 +1235,26 @@ function Update-TrackerHint {
 
 function Update-Firearms {
     if ($script:online) {
-        # The firearms live in the online database, which this laptop does not read: the number is typed.
+        # The firearms live in the online database: the online server lists them. If it cannot be
+        # asked (no internet, a different secret), the number is typed as before.
         $cbFirearm.Items.Clear()
-        $cbFirearm.Text = Get-ConfigDefine 'EQUIPMENT_ID'
-        Set-Hint $hintFirearm 'info' 'Positions count only while it is issued with GPS on, or out for repair.'
+        $current = Get-ConfigDefine 'EQUIPMENT_ID'
+        $list = Get-OnlineTrackableFirearms
+        if ($null -eq $list) {
+            $cbFirearm.Text = $current
+            Set-Hint $hintFirearm 'warn' 'Could not get the firearm list from the online server; type the number (the end of its page address: /firearms/3 = 3).'
+        } else {
+            foreach ($f in $list) { [void]$cbFirearm.Items.Add($f) }
+            $match = $list | Where-Object { $_ -match "^$current - " } | Select-Object -First 1
+            if ($match) { $cbFirearm.Text = $match }
+            elseif ($list.Count -gt 0) { $cbFirearm.SelectedIndex = 0 }
+            else { $cbFirearm.Text = $current }
+            if ($list.Count -eq 0) {
+                Set-Hint $hintFirearm 'warn' 'No firearm is issued with GPS on online; issue one first, or type the number.'
+            } else {
+                Set-Hint $hintFirearm 'info' 'Positions count only while it is issued with GPS on, or out for repair.'
+            }
+        }
         Clear-ComboHighlight $cbFirearm
         Update-Wrap
         return
@@ -1776,7 +1805,7 @@ $btnSave.Add_Click({
         Show-Banner 'err' "'$ip' is not a valid IP address. Connect the laptop to the hotspot and press Detect again."; $tbIp.Focus(); return
     }
     if ($cbFirearm.Text -notmatch '^\s*(\d+)') {
-        Show-Banner 'err' $(if ($online) { 'Type the firearm number.' } else { 'Choose the firearm (its number comes first).' }); $cbFirearm.Focus(); return
+        Show-Banner 'err' 'Choose the firearm (its number comes first), or type its number.'; $cbFirearm.Focus(); return
     }
     $equipment = [int]$Matches[1]
     # No USB cable: the firmware goes over Wi-Fi, through the backend, to a tracker that reports there.

@@ -337,6 +337,29 @@ class TripMonitoringTest extends TestCase
         $this->assertSame(3420, $item['battery_mv']);
     }
 
+    public function test_the_setup_tool_lists_trackable_firearms_with_a_signed_request(): void
+    {
+        [$firearm, $tx] = $this->trip();
+        $ts = (string) time();
+        $signed = fn (string $ts, string $secret = self::SECRET) => [
+            'X-Armory-Timestamp' => $ts,
+            'X-Armory-Signature' => hash_hmac('sha256', 'trackable:' . $ts, $secret),
+            'Accept'             => 'application/json',
+        ];
+
+        $items = $this->getJson('/api/v1/gps/trackable', $signed($ts))->assertOk()->json('items');
+        $this->assertContains([
+            'equipment_id'  => $firearm->equipment_id,
+            'serial_number' => $firearm->serial_number,
+            'model'         => $firearm->model,
+            'status'        => Transaction::STATUS_ACTIVE,
+        ], $items);
+
+        // A different secret, or a signature older than 5 minutes, gets nothing.
+        $this->getJson('/api/v1/gps/trackable', $signed($ts, 'wrong-secret'))->assertStatus(401);
+        $this->getJson('/api/v1/gps/trackable', $signed((string) (time() - 600)))->assertStatus(401);
+    }
+
     public function test_the_gps_page_shows_the_latest_battery_reading_from_positions(): void
     {
         [$firearm, $tx] = $this->trip();

@@ -378,6 +378,53 @@ class GpsController extends Controller
     }
 
     /**
+     * IoT SETUP — the firearms a tracker can be set up for right now: issued (Active/Overdue) with
+     * GPS tracking on, or out for repair. The setup tool lists them by serial number in Online mode,
+     * where it cannot read the database. Signed with the IoT secret: X-Armory-Signature is the HMAC
+     * of "trackable:<X-Armory-Timestamp>", and the timestamp must be within 5 minutes.
+     */
+    public function trackable(Request $request): JsonResponse
+    {
+        $secret = (string) config('armory.iot.hmac_secret');
+        if ($secret === '') {
+            return response()->json(['message' => 'IoT secret not configured.'], 503);
+        }
+        $timestamp = (string) $request->header('X-Armory-Timestamp', '');
+        $expected = hash_hmac('sha256', 'trackable:' . $timestamp, $secret);
+        if (! ctype_digit($timestamp) || abs(time() - (int) $timestamp) > 300
+            || ! hash_equals($expected, (string) $request->header('X-Armory-Signature', ''))) {
+            return response()->json(['message' => 'Invalid signature.'], 401);
+        }
+
+        $issued = Transaction::with('firearm')
+            ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
+            ->where('gps_tracking_enabled', true)
+            ->get()
+            ->filter(fn (Transaction $tx) => $tx->firearm !== null)
+            ->map(fn (Transaction $tx) => [
+                'equipment_id'  => $tx->firearm->equipment_id,
+                'serial_number' => $tx->firearm->serial_number,
+                'model'         => $tx->firearm->model,
+                'status'        => $tx->status,
+            ]);
+        $inRepair = RepairRequest::with('firearm')
+            ->where('status', RepairRequest::STATUS_IN_REPAIR)
+            ->get()
+            ->filter(fn (RepairRequest $r) => $r->firearm !== null
+                && (int) $r->firearm->availability_status === FirearmEquipment::STATUS_MAINTENANCE)
+            ->map(fn (RepairRequest $r) => [
+                'equipment_id'  => $r->firearm->equipment_id,
+                'serial_number' => $r->firearm->serial_number,
+                'model'         => $r->firearm->model,
+                'status'        => 'In repair',
+            ]);
+
+        return response()->json([
+            'items' => $issued->concat($inRepair)->unique('equipment_id')->sortBy('equipment_id')->values(),
+        ]);
+    }
+
+    /**
      * Latest GPS position for every active firearm. Used by the live map.
      */
     public function liveMap(Request $request): JsonResponse
