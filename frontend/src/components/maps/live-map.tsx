@@ -162,17 +162,47 @@ function InitialFit({ points }: { points: [number, number][] }) {
   return null;
 }
 
+/** Space kept clear under the status chips and above the bottom buttons (follow, trail mode). */
+const CHROME_GAP = 10;
+const BOTTOM_CHROME = 56;
+
 /**
- * Keeps the tracked firearm centred as new fixes arrive, and steps aside the
+ * Pans so the tracked firearm sits in the free part of the map: below the status chips (measured,
+ * since they wrap on narrow screens) and above the bottom buttons. With its card open, the card and
+ * the marker are centred together, so the card's top is never hidden under the chips.
+ */
+function frameTarget(map: L.Map, position: [number, number], popupOpen: boolean) {
+  const container = map.getContainer();
+  const box = container.getBoundingClientRect();
+  const chips = container.parentElement?.querySelector<HTMLElement>('[data-map-chrome="top"]');
+  const top = (chips ? chips.getBoundingClientRect().bottom - box.top : 0) + CHROME_GAP;
+  const bottom = box.height - BOTTOM_CHROME;
+  const room = Math.max(0, bottom - top);
+
+  const marker = map.latLngToContainerPoint(position);
+  const card = popupOpen ? container.querySelector<HTMLElement>(".live-map-popup") : null;
+  // How far the block reaches above the marker's point: the card's top, or the marker icon alone.
+  const above = card ? Math.max(0, marker.y - (card.getBoundingClientRect().top - box.top)) : 40;
+
+  // Centre the block in the free space; when it is taller than that, keep the card's top in view.
+  const wantY = above <= room ? top + (room + above) / 2 : top + above;
+  map.panBy([marker.x - box.width / 2, marker.y - wantY], { animate: true, duration: 0.6 });
+}
+
+/**
+ * Keeps the tracked firearm in view as new fixes arrive, and steps aside the
  * moment the operator drags or zooms the map themselves.
  */
 function FollowTarget({
   position,
   active,
+  popupOpen,
   onDisengage,
 }: {
   position: [number, number] | null;
   active: boolean;
+  /** The tracked firearm's card is open: frame the card and the marker together. */
+  popupOpen: boolean;
   onDisengage: () => void;
 }) {
   const map = useMap();
@@ -182,6 +212,8 @@ function FollowTarget({
 
     // Programmatic pans also fire these events, so ignore the ones we cause.
     let ours = false;
+    let frame = 0;
+    let settle = 0;
     const release = () => { if (!ours) onDisengage(); };
 
     map.on("dragstart", release);
@@ -189,15 +221,20 @@ function FollowTarget({
 
     if (position) {
       ours = true;
-      map.panTo(position, { animate: true, duration: 0.6 });
-      window.setTimeout(() => { ours = false; }, 800);
+      // Two frames: the card's content is rendered into Leaflet's popup after it opens.
+      frame = window.requestAnimationFrame(() => {
+        frame = window.requestAnimationFrame(() => frameTarget(map, position, popupOpen));
+      });
+      settle = window.setTimeout(() => { ours = false; }, 900);
     }
 
     return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(settle);
       map.off("dragstart", release);
       map.off("zoomstart", release);
     };
-  }, [map, position, active, onDisengage]);
+  }, [map, position, active, popupOpen, onDisengage]);
 
   return null;
 }
@@ -214,6 +251,8 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
   /** equipment_id being followed; null means "show everything". */
   const [trackedId, setTrackedId] = useState<number | null>(focusId ?? null);
   const [following, setFollowing] = useState(true);
+  /** equipment_id whose card (popup) is open, so following can keep the whole card in view. */
+  const [openCardId, setOpenCardId] = useState<number | null>(null);
 
   const { data } = useQuery({
     queryKey: ["gps-live"],
@@ -290,7 +329,8 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
   }
 
   return (
-    <div className="absolute inset-0 overflow-hidden">
+    // A size container: the firearm card's height is capped to the map's (globals.css, .live-map-popup).
+    <div className="absolute inset-0 overflow-hidden [container-type:size]">
       <MapContainer
         key={mapKey}
         center={[lat, lon]}
@@ -353,9 +393,12 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
                 setTrackedId(item.equipment_id);
                 setFollowing(true);
               },
+              popupopen: () => setOpenCardId(item.equipment_id),
+              popupclose: () => setOpenCardId((open) => (open === item.equipment_id ? null : open)),
             }}
           >
-            <Popup className="tactical-popup" minWidth={255} maxWidth={275}>
+            {/* Following frames the card itself (FollowTarget); Leaflet's own auto-pan would fight it. */}
+            <Popup className="tactical-popup live-map-popup" minWidth={255} maxWidth={275} autoPan={false}>
               <div
                 style={{ backgroundColor: "#131a20", color: "#f1f5f9" }}
                 className="w-[260px] p-3 text-steel-100 font-sans text-xs select-text rounded-md"
@@ -528,7 +571,12 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
         ))}
 
         <InitialFit points={points} />
-        <FollowTarget position={trackedPosition} active={following} onDisengage={disengage} />
+        <FollowTarget
+          position={trackedPosition}
+          active={following}
+          popupOpen={openCardId != null && openCardId === activeId}
+          onDisengage={disengage}
+        />
       </MapContainer>
 
       {trailFixes.length > 1 && (
@@ -554,7 +602,7 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
       )}
 
       {items.length > 0 && (
-        <div className="pointer-events-none absolute left-3 top-3 z-[500] flex flex-wrap gap-1.5">
+        <div data-map-chrome="top" className="pointer-events-none absolute left-3 top-3 z-[500] flex flex-wrap gap-1.5">
           <span className="pill pill-ok bg-steel-900/85">{liveCount} live</span>
           {staleCount > 0 && <span className="pill pill-warn bg-steel-900/85">{staleCount} last known</span>}
           {placeholderCount > 0 && <span className="pill pill-muted bg-steel-900/85">{placeholderCount} placeholder</span>}
