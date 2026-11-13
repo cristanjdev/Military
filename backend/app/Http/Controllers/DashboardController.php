@@ -104,7 +104,10 @@ class DashboardController extends Controller
         $recentTransactions = Transaction::with(['firearm:equipment_id,serial_number,model', 'user:user_id,first_name,last_name,rank'])
             ->latest('checkout_at')->limit(10)->get();
 
+        // The sign-in steps (password, code, fingerprint) are on the full trail; the feed shows the
+        // one "login" each sign-in ends with, so the 15 rows are 15 different things that happened.
         $recentAudit = AuditLog::with(['user:user_id,username,first_name,last_name,rank', 'firearm:equipment_id,serial_number,model'])
+            ->whereNotIn('action', ['login_step1', 'login_step2', 'login_step3'])
             ->latest('created_at')->limit(15)->get();
 
         // ───────── Role-specific response shaping ─────────
