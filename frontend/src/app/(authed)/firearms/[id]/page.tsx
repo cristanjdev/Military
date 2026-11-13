@@ -38,6 +38,9 @@ import { PasswordConfirmModal } from "@/components/ui/password-confirm-modal";
 import { EditFirearmModal } from "@/components/firearms/edit-firearm-modal";
 import { ReleaseHistory } from "@/components/firearms/release-history";
 
+/** "November 6, 2026 at 3:51 PM" for the issue banner's out and due times. */
+const FRIENDLY_DATE = "MMMM d, yyyy 'at' h:mm a";
+
 export default function FirearmDetailPage() {
   const router = useRouter();
   const { id } = useParams() as { id: string };
@@ -285,13 +288,13 @@ export default function FirearmDetailPage() {
                   </span>
                   <span className="text-steel-600">·</span>
                   <span className="text-steel-400">
-                    Out: {fmtDate(activeTx.checkout_at)}
+                    Out: {fmtDate(activeTx.checkout_at, FRIENDLY_DATE)}
                   </span>
                   {activeTx.expected_return_at && (
                     <>
                       <span className="text-steel-600">·</span>
                       <span className={activeTx.status === "Overdue" ? "text-red-300 font-semibold" : "text-steel-400"}>
-                        Due: {fmtDate(activeTx.expected_return_at)}
+                        Due: {fmtDate(activeTx.expected_return_at, FRIENDLY_DATE)}
                       </span>
                     </>
                   )}
@@ -314,7 +317,7 @@ export default function FirearmDetailPage() {
                         : "btn-secondary border-steel-700 hover:border-olive-500 text-steel-200"
                     }`}
                   >
-                    <RotateCcw className="h-3.5 w-3.5 text-steel-400" /> Process Return
+                    <RotateCcw className="h-3.5 w-3.5 shrink-0" /> Process Return
                   </Link>
                 )}
               </div>
