@@ -39,7 +39,7 @@
         </div>
 
         <div class="footer">
-            <p>This is an automated alert from the ArmoryDB Firearm Tracking System.</p>
+            <p>This is an automated alert from ArmoryDB, the IoT-Based Firearm Accountability and Monitoring System.</p>
             <p>Do not reply to this email. Log in to the dashboard for details.</p>
         </div>
     </div>

@@ -37,7 +37,7 @@
         <td style="vertical-align:middle;">
           <div class="brand">
             ArmoryDB — 10RCDG
-            <small>Real-Time GPS Firearm Tracking & Management System</small>
+            <small>IoT-Based Firearm Accountability and Monitoring System with GPS, Geofencing, and Biometric Authentication</small>
           </div>
         </td>
         <td style="text-align:right; vertical-align:middle;">

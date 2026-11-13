@@ -1,4 +1,4 @@
-# Real-Time GPS-Based Firearm Tracking and Management System
+# IoT-Based Firearm Accountability and Monitoring System with GPS, Geofencing, and Biometric Authentication
 
 > **Capstone Project** – College of Information Technology, Liceo de Cagayan University
 > **Target Institution:** 10th Regional Community Defense Group (10RCDG), Reserve Command, Philippine Army

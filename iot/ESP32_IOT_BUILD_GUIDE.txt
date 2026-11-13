@@ -1,5 +1,6 @@
 ARMORYDB ESP32 GPS TRACKER BUILD GUIDE
-Real-Time GPS-Based Firearm Tracking and Management System
+IoT-Based Firearm Accountability and Monitoring System with GPS, Geofencing,
+and Biometric Authentication
 
 Purpose:
 This guide explains, step by step, how to build and connect the IoT GPS tracker

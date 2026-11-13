@@ -10,7 +10,7 @@ const mono  = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" 
 export const metadata: Metadata = {
   title: "ArmoryDB · 10RCDG",
   description:
-    "Real-Time GPS-Based Firearm Tracking and Management System — 10th Regional Community Defense Group",
+    "IoT-Based Firearm Accountability and Monitoring System with GPS, Geofencing, and Biometric Authentication — 10th Regional Community Defense Group",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

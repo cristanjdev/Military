@@ -405,8 +405,9 @@ export default function LoginPage() {
             10th RCDG · Reserve Command
           </p>
           <p className="mt-6 text-steel-300 leading-relaxed">
-            Real-Time GPS Firearm Tracking & Management System.
-            QR identification, biometric authentication, immutable audit trails.
+            IoT-Based Firearm Accountability and Monitoring System with GPS, Geofencing, and
+            Biometric Authentication.
+            QR identification and tamper-evident audit trails.
           </p>
         </motion.div>
       </div>

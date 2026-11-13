@@ -1,6 +1,6 @@
 # IoT Hardware Guide — Complete Step-by-Step
 
-## For: Real-Time GPS-Based Firearm Tracking System (ArmoryDB)
+## For: IoT-Based Firearm Accountability and Monitoring System with GPS, Geofencing, and Biometric Authentication (ArmoryDB)
 
 This guide walks you through everything from buying parts to having a working GPS tracker that sends real-time coordinates to your Laravel backend.
 
