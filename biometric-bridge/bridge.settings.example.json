@@ -3,7 +3,8 @@
   "hmac_secret": "PASTE THE SAME VALUE AS BIOMETRIC_BRIDGE_HMAC_SECRET IN backend/.env",
   "allowed_origins": [
     "http://localhost:3000",
-    "http://127.0.0.1:3000"
+    "http://127.0.0.1:3000",
+    "https://militarygps.vercel.app"
   ],
   "enroll_timeout_seconds": 90,
   "verify_timeout_seconds": 30,

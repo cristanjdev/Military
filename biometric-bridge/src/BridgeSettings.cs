@@ -18,6 +18,7 @@ namespace ArmoryBiometricBridge
         {
             "http://localhost:3000",
             "http://127.0.0.1:3000",
+            "https://militarygps.vercel.app",
         };
         /// <summary>low (default, no admin needed), normal (foreground only) or high (needs Administrator).</summary>
         public string CapturePriority { get; private set; } = "low";
