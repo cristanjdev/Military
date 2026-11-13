@@ -17,28 +17,45 @@ use Illuminate\Support\Facades\Log;
  * while it has no GPS fix, so a tracker kept indoors still warns before it dies. A recharged or
  * swapped battery re-arms the alerts once it reads 5 points above the threshold, so a reading that
  * wobbles around 20 % does not repeat them. In-app only, like the tracker's signal alerts.
+ *
+ * Trackers also send the cell voltage (battery_mv). Below armory.gps.battery_absent_mv no cell is
+ * being measured (USB power, switch off, no cell), so the level is dropped instead of read as 0%.
  */
 class TrackerBattery
 {
     private const REARM_MARGIN = 5;
 
+    /** The level a report really carries: null when its voltage shows no cell is measured. */
+    public static function level(?int $pct, ?int $mv): ?int
+    {
+        return self::absent($mv) ? null : $pct;
+    }
+
+    public static function absent(?int $mv): bool
+    {
+        return $mv !== null && $mv < (int) config('armory.gps.battery_absent_mv', 2500);
+    }
+
     /**
      * Keeps the latest reading on the firearm, so the GPS page shows it even while the tracker
      * has no fix. A plain query: it must not change the firearm's updated_at or audit trail.
+     * A "no battery" reading is kept too (level null, voltage set), replacing an older level.
      */
-    public static function record(int $equipmentId, ?int $pct): void
+    public static function record(int $equipmentId, ?int $pct, ?int $mv = null): void
     {
-        if ($pct === null) {
+        if ($pct === null && $mv === null) {
             return;
         }
         DB::table('firearm_equipment')->where('equipment_id', $equipmentId)->update([
-            'tracker_battery_pct' => $pct,
+            'tracker_battery_pct' => self::level($pct, $mv),
+            'tracker_battery_mv'  => $mv,
             'tracker_battery_at'  => now(),
         ]);
     }
 
-    public static function check(Transaction $tx, FirearmEquipment $firearm, ?int $pct, string $deviceId): void
+    public static function check(Transaction $tx, FirearmEquipment $firearm, ?int $pct, string $deviceId, ?int $mv = null): void
     {
+        $pct = self::level($pct, $mv);
         if ($pct === null) {
             return;
         }

@@ -1,4 +1,4 @@
-import { Battery, BatteryFull, BatteryLow, BatteryMedium, BatteryWarning, type LucideIcon } from "lucide-react";
+import { Battery, BatteryFull, BatteryLow, BatteryMedium, BatteryWarning, PlugZap, type LucideIcon } from "lucide-react";
 import { cn, fmtRelative } from "@/lib/utils";
 
 /* The system alerts at 20% (Low Battery) and 10% (Battery Critical); the levels follow those alerts. */
@@ -9,7 +9,10 @@ interface Level {
   bar: string;
 }
 
-export function batteryLevel(pct: number | null | undefined): Level {
+/* "absent": the tracker measures no cell (USB power with the battery switched off, no cell, or a
+ * loose divider wire). That is not an empty battery, so it gets its own neutral state. */
+export function batteryLevel(pct: number | null | undefined, absent = false): Level {
+  if (absent) return { label: "No battery", Icon: PlugZap, text: "text-sky-400", bar: "bg-steel-700" };
   if (pct == null) return { label: "Not reported", Icon: Battery, text: "text-steel-500", bar: "bg-steel-700" };
   if (pct <= 10) return { label: "Critical", Icon: BatteryWarning, text: "text-red-400", bar: "bg-red-500" };
   if (pct <= 20) return { label: "Low", Icon: BatteryLow, text: "text-amber-400", bar: "bg-amber-500" };
@@ -17,24 +20,52 @@ export function batteryLevel(pct: number | null | undefined): Level {
   return { label: "Good", Icon: BatteryFull, text: "text-emerald-400", bar: "bg-emerald-500" };
 }
 
+const volts = (mv: number | null | undefined) => (mv == null ? null : `${(mv / 1000).toFixed(2)} V`);
+
 /** Icon and percentage for a collapsed list row. */
-export function BatteryBadge({ pct }: { pct: number | null | undefined }) {
-  const level = batteryLevel(pct);
+export function BatteryBadge({ pct, absent = false }: { pct: number | null | undefined; absent?: boolean }) {
+  const level = batteryLevel(pct, absent);
+  const title = absent
+    ? "No battery measured: USB power or the battery is switched off"
+    : pct == null ? "No battery reading from this tracker" : `Battery ${pct}% · ${level.label}`;
   return (
-    <div className="flex items-center gap-1" title={pct == null ? "No battery reading from this tracker" : `Battery ${pct}% · ${level.label}`}>
-      <level.Icon className={cn("h-3.5 w-3.5", pct == null ? "text-steel-600" : level.text)} />
-      <span className={cn("font-mono text-[10px] font-semibold", level.text)}>{pct == null ? "—" : `${pct}%`}</span>
+    <div className="flex items-center gap-1" title={title}>
+      <level.Icon className={cn("h-3.5 w-3.5", pct == null && !absent ? "text-steel-600" : level.text)} />
+      <span className={cn("font-mono text-[10px] font-semibold", level.text)}>{absent ? "USB" : pct == null ? "—" : `${pct}%`}</span>
     </div>
   );
 }
 
-/** Bar, percentage, level and the time of the reading, for the details panel and the map popup. */
-export function BatteryDetails({ pct, reportedAt, label = "Battery" }: { pct: number | null | undefined; reportedAt?: string | null; label?: string }) {
-  const level = batteryLevel(pct);
+/** Bar, percentage, level, voltage and the time of the reading, for the details panel and the map popup. */
+export function BatteryDetails({
+  pct,
+  mv,
+  absent = false,
+  reportedAt,
+  label = "Battery",
+}: {
+  pct: number | null | undefined;
+  mv?: number | null;
+  absent?: boolean;
+  reportedAt?: string | null;
+  label?: string;
+}) {
+  const level = batteryLevel(pct, absent);
+  const reported = reportedAt ? ` · reported ${fmtRelative(reportedAt)}` : "";
   return (
     <div className="flex justify-between items-start gap-3">
       <span className="text-steel-400">{label}</span>
-      {pct == null ? (
+      {absent ? (
+        <div className="text-right">
+          <div className="flex items-center justify-end gap-1.5">
+            <level.Icon className={cn("h-3.5 w-3.5", level.text)} />
+            <span className={cn("text-[11px] font-semibold", level.text)}>{level.label}</span>
+          </div>
+          <span className="block text-[10px] text-steel-500 mt-0.5">
+            USB power, or the battery is off or not connected{mv != null ? ` (${volts(mv)})` : ""}{reported}
+          </span>
+        </div>
+      ) : pct == null ? (
         <div className="text-right">
           <span className="text-[10px] text-steel-500">Not reported</span>
           <span className="block text-[10px] text-steel-600">The tracker has not sent a battery level</span>
@@ -50,7 +81,8 @@ export function BatteryDetails({ pct, reportedAt, label = "Battery" }: { pct: nu
           </div>
           <span className="block text-[10px] text-steel-500 mt-0.5">
             <span className={level.text}>{level.label}</span>
-            {reportedAt ? ` · reported ${fmtRelative(reportedAt)}` : ""}
+            {mv != null ? ` · ${volts(mv)}` : ""}
+            {reported}
           </span>
         </div>
       )}

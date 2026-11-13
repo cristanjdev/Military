@@ -48,6 +48,7 @@ class FirearmEquipment extends Model
         'condition_status'      => 'integer',
         'availability_status'   => 'integer',
         'tracker_battery_pct'   => 'integer',
+        'tracker_battery_mv'    => 'integer',
         'tracker_battery_at'    => 'datetime',
     ];
 

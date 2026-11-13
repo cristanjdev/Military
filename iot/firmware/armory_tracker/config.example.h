@@ -159,12 +159,15 @@
 
 /* ---------- Battery monitor (21700 battery build) ----------
  * Set to 1 once the two 100k resistors are wired from Battery+ to BATTERY_PIN (GPIO34) and GND.
- * The level then goes with every update, and the system alerts at 20% and 10%.
+ * The level and the measured voltage then go with every update, and the system alerts at 20% and 10%.
+ * Below BATTERY_ABSENT_BELOW_V (cell volts) no cell is being measured: USB power with the switch
+ * off, no cell, or a loose divider wire. The tracker then reports "no battery", never 0%.
  * Leave 0 on a USB or power bank build: an unwired pin reads noise and would raise false alerts.
  */
 #define HAS_BATTERY_MONITOR 0
 #define BATTERY_PIN 34
 #define BATTERY_DIVIDER_RATIO 2.0f
+#define BATTERY_ABSENT_BELOW_V 2.5f
 
 /* ---------- Optional tamper switch ----------
  * Detected and logged locally. The API does not store a tamper flag yet,

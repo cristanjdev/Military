@@ -61,7 +61,10 @@ class GpsController extends Controller
             'altitude_meters' => ['nullable', 'numeric'],
             'satellites'      => ['nullable', 'integer', 'min:0', 'max:64'],
             'battery_pct'     => ['nullable', 'integer', 'between:0,100'],
+            'battery_mv'      => ['nullable', 'integer', 'between:0,10000'],
         ]);
+        $batteryMv = isset($data['battery_mv']) ? (int) $data['battery_mv'] : null;
+        $batteryPct = TrackerBattery::level(isset($data['battery_pct']) ? (int) $data['battery_pct'] : null, $batteryMv);
 
         /*
          * Normalise to the application timezone before comparing or storing.
@@ -106,7 +109,9 @@ class GpsController extends Controller
                 $zoneNames,
                 $zones,
                 $signatureHeader,
-                $request
+                $request,
+                $batteryPct,
+                $batteryMv
             ) {
                 $firearm = FirearmEquipment::lockForUpdate()->findOrFail($data['equipment_id']);
                 $activeTransaction = $firearm->transactions()
@@ -121,7 +126,7 @@ class GpsController extends Controller
                         ->where('status', RepairRequest::STATUS_IN_REPAIR)
                         ->first();
                     if ($repair && (int) $firearm->availability_status === FirearmEquipment::STATUS_MAINTENANCE) {
-                        return $this->recordRepairPosition($firearm, $repair, $data, $capturedAt, $insideAny, $signatureHeader);
+                        return $this->recordRepairPosition($firearm, $repair, $data, $capturedAt, $insideAny, $signatureHeader, $batteryPct, $batteryMv);
                     }
                     return response()->json(['message' => 'No active firearm transaction accepts GPS updates.'], 409);
                 }
@@ -164,15 +169,15 @@ class GpsController extends Controller
                     'heading_deg'        => $data['heading_deg'] ?? null,
                     'altitude_meters'    => $data['altitude_meters'] ?? null,
                     'satellites'         => $data['satellites'] ?? null,
-                    'battery_pct'        => $data['battery_pct'] ?? null,
+                    'battery_pct'        => $batteryPct,
                     'is_inside_geofence' => $insideAny,
                     'device_id'          => $data['device_id'],
                     'signature'          => substr($signatureHeader, 0, 128),
                 ]);
 
                 TrackerWatchdog::seen($data['device_id'], $firearm, $activeTransaction);
-                TrackerBattery::record($firearm->equipment_id, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null);
-                TrackerBattery::check($activeTransaction, $firearm, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null, $data['device_id']);
+                TrackerBattery::record($firearm->equipment_id, $batteryPct, $batteryMv);
+                TrackerBattery::check($activeTransaction, $firearm, $batteryPct, $data['device_id'], $batteryMv);
 
                 // An issuance with an assigned destination follows the trip rules (TripMonitor);
                 // one without (issued before destinations existed) alerts on leaving every zone.
@@ -257,6 +262,8 @@ class GpsController extends Controller
         CarbonImmutable $capturedAt,
         bool $insideAny,
         string $signatureHeader,
+        ?int $batteryPct,
+        ?int $batteryMv,
     ): JsonResponse {
         $latestDeviceLog = GpsLog::where('device_id', $data['device_id'])
             ->latest('captured_at')
@@ -278,12 +285,12 @@ class GpsController extends Controller
             'heading_deg'        => $data['heading_deg'] ?? null,
             'altitude_meters'    => $data['altitude_meters'] ?? null,
             'satellites'         => $data['satellites'] ?? null,
-            'battery_pct'        => $data['battery_pct'] ?? null,
+            'battery_pct'        => $batteryPct,
             'is_inside_geofence' => $insideAny,
             'device_id'          => $data['device_id'],
             'signature'          => substr($signatureHeader, 0, 128),
         ]);
-        TrackerBattery::record($firearm->equipment_id, isset($data['battery_pct']) ? (int) $data['battery_pct'] : null);
+        TrackerBattery::record($firearm->equipment_id, $batteryPct, $batteryMv);
 
         return response()->json([
             'ok'              => true,
@@ -320,12 +327,15 @@ class GpsController extends Controller
             'satellites_used'    => ['nullable', 'integer', 'min:0', 'max:64'],
             'rssi'               => ['nullable', 'integer', 'between:-127,0'],
             'battery_pct'        => ['nullable', 'integer', 'between:0,100'],
+            'battery_mv'         => ['nullable', 'integer', 'between:0,10000'],
         ]);
+        $batteryMv = isset($data['battery_mv']) ? (int) $data['battery_mv'] : null;
+        $batteryPct = TrackerBattery::level(isset($data['battery_pct']) ? (int) $data['battery_pct'] : null, $batteryMv);
 
-        if (isset($data['equipment_id'], $data['battery_pct'])) {
+        if (isset($data['equipment_id']) && ($batteryPct !== null || $batteryMv !== null)) {
             $firearm = FirearmEquipment::find($data['equipment_id']);
             if ($firearm) {
-                TrackerBattery::record($firearm->equipment_id, (int) $data['battery_pct']);
+                TrackerBattery::record($firearm->equipment_id, $batteryPct, $batteryMv);
             }
             $tx = $firearm?->transactions()
                 ->whereIn('status', [Transaction::STATUS_ACTIVE, Transaction::STATUS_OVERDUE])
@@ -333,7 +343,7 @@ class GpsController extends Controller
                 ->latest('checkout_at')
                 ->first();
             if ($tx) {
-                TrackerBattery::check($tx, $firearm, (int) $data['battery_pct'], $data['device_id']);
+                TrackerBattery::check($tx, $firearm, $batteryPct, $data['device_id'], $batteryMv);
             }
         }
 
@@ -465,8 +475,11 @@ class GpsController extends Controller
                         ->values(),
                     // The latest reading from any report (also no-fix ones); older trackers only
                     // carried it with positions, so fall back to the last position's reading.
-                    'battery_pct'    => $f->tracker_battery_pct ?? $latest?->battery_pct,
-                    'battery_reported_at' => $f->tracker_battery_pct !== null
+                    // A recorded "no battery" reading (voltage, no level) is shown as such.
+                    'battery_pct'    => $f->tracker_battery_at !== null ? $f->tracker_battery_pct : $latest?->battery_pct,
+                    'battery_mv'     => $f->tracker_battery_at !== null ? $f->tracker_battery_mv : null,
+                    'battery_absent' => $f->tracker_battery_at !== null && TrackerBattery::absent($f->tracker_battery_mv),
+                    'battery_reported_at' => $f->tracker_battery_at !== null
                         ? $f->tracker_battery_at
                         : ($latest?->battery_pct !== null ? ($latest->received_at ?? $latest->captured_at) : null),
                     // The trip to the assigned destination (TripMonitor); null for older issuances.

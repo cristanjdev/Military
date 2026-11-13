@@ -103,6 +103,10 @@ interface LiveItem {
   /** Zones the shown position falls in; empty means outside all of them. */
   zones?: string[];
   battery_pct?: number | null;
+  /** Cell voltage behind the reading, in millivolts. */
+  battery_mv?: number | null;
+  /** The tracker measures no cell (USB power, battery switched off): not an empty battery. */
+  battery_absent?: boolean;
   /** When that battery reading arrived (with a position or a no-fix report). */
   battery_reported_at?: string | null;
   /** The trip to the assigned destination; null for issuances from before destinations. */
@@ -436,7 +440,7 @@ export function LiveMap({ focusId }: { focusId?: number } = {}) {
                     </div>
                   )}
 
-                  <BatteryDetails pct={item.battery_pct} reportedAt={item.battery_reported_at} />
+                  <BatteryDetails pct={item.battery_pct} mv={item.battery_mv} absent={item.battery_absent} reportedAt={item.battery_reported_at} />
 
                   <div className="flex justify-between items-center">
                     <span className="text-steel-400">Telemetry</span>

@@ -14,6 +14,9 @@ return [
         // Tracker battery levels (%) that raise a "Low Battery" and a "Battery Critical" alert.
         'battery_low_pct'         => (int) env('ARMORY_BATTERY_LOW_PCT', 20),
         'battery_critical_pct'    => (int) env('ARMORY_BATTERY_CRITICAL_PCT', 10),
+        // Below this cell voltage (mV) the tracker is not running from its battery (USB power,
+        // switch off, no cell): the reading means "no battery", never 0%, and raises no alert.
+        'battery_absent_mv'       => (int) env('ARMORY_BATTERY_ABSENT_MV', 2500),
     ],
 
     'session' => [

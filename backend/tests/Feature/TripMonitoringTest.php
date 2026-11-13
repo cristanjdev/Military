@@ -285,6 +285,58 @@ class TripMonitoringTest extends TestCase
         $this->assertNotNull($item['battery_reported_at']);
     }
 
+    public function test_a_tracker_measuring_no_cell_reports_no_battery_instead_of_zero(): void
+    {
+        [$firearm, $tx] = $this->trip();
+        $this->report($firearm, $tx, self::CAMP, 1, 64);
+
+        // On USB power with the battery switched off the divider reads about 0 V. Older firmware
+        // turned that into 0%; either way it must not raise "Battery Critical".
+        foreach ([['battery_mv' => 40], ['battery_mv' => 40, 'battery_pct' => 0]] as $battery) {
+            $body = json_encode([
+                'device_id' => 'TEST-GPS-DEVICE-01', 'equipment_id' => $firearm->equipment_id,
+                'line' => '[gps] no fix yet',
+            ] + $battery, JSON_THROW_ON_ERROR);
+            $this->call('POST', '/api/v1/gps/status', [], [], [], [
+                'CONTENT_TYPE' => 'application/json',
+                'HTTP_ACCEPT' => 'application/json',
+                'HTTP_X_ARMORY_SIGNATURE' => hash_hmac('sha256', $body, self::SECRET),
+            ], $body)->assertOk();
+        }
+        $this->assertSame([], $this->issuerTypes($tx));
+
+        // The GPS page shows "no battery" in place of the earlier 64%, not a stale or false level.
+        $this->actAs('admin');
+        $item = collect($this->getJson('/api/v1/gps/live')->assertOk()->json('items'))
+            ->firstWhere('equipment_id', $firearm->equipment_id);
+        $this->assertNull($item['battery_pct']);
+        $this->assertTrue($item['battery_absent']);
+        $this->assertSame(40, $item['battery_mv']);
+        $this->assertNotNull($item['battery_reported_at']);
+    }
+
+    public function test_a_real_cell_near_empty_still_alerts(): void
+    {
+        [$firearm, $tx] = $this->trip();
+        $body = json_encode([
+            'device_id' => 'TEST-GPS-DEVICE-01', 'equipment_id' => $firearm->equipment_id,
+            'line' => '[gps] no fix yet', 'battery_pct' => 3, 'battery_mv' => 3420,
+        ], JSON_THROW_ON_ERROR);
+        $this->call('POST', '/api/v1/gps/status', [], [], [], [
+            'CONTENT_TYPE' => 'application/json',
+            'HTTP_ACCEPT' => 'application/json',
+            'HTTP_X_ARMORY_SIGNATURE' => hash_hmac('sha256', $body, self::SECRET),
+        ], $body)->assertOk();
+
+        $this->assertSame(['battery_critical'], $this->issuerTypes($tx));
+        $this->actAs('admin');
+        $item = collect($this->getJson('/api/v1/gps/live')->assertOk()->json('items'))
+            ->firstWhere('equipment_id', $firearm->equipment_id);
+        $this->assertSame(3, $item['battery_pct']);
+        $this->assertFalse($item['battery_absent']);
+        $this->assertSame(3420, $item['battery_mv']);
+    }
+
     public function test_the_gps_page_shows_the_latest_battery_reading_from_positions(): void
     {
         [$firearm, $tx] = $this->trip();

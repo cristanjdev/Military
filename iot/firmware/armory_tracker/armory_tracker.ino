@@ -582,21 +582,45 @@ int liIonPct(float v) {
   return 100;
 }
 
-int readBatteryPct() {
+#ifndef BATTERY_ABSENT_BELOW_V
+/* A Li-ion cell's protection cuts it off near 2.5-3.0 V, so the tracker never runs from a cell
+ * reading lower. Below this the divider sees no cell at all: USB power with the switch off, no
+ * cell in the holder or a loose divider wire. That is "no battery", not "0%". */
+#define BATTERY_ABSENT_BELOW_V 2.5f
+#endif
+
+/* The cell's voltage through the divider. analogReadMilliVolts applies the chip's factory ADC
+ * calibration; the raw count alone can be off by a tenth of a volt, a large part of the
+ * battery's 0.9 V range. */
+float readBatteryVolts() {
+  long mv = 0;
+  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(BATTERY_PIN);
+  return (mv / 8) / 1000.0f * BATTERY_DIVIDER_RATIO;
+}
+
+/* Battery fields of a report: the measured voltage always, the level only when a cell is there,
+ * so a tracker on USB power reports "no battery" instead of a false 0% that raises an alert. */
+void addBattery(JsonDocument& doc) {
 #if SIMULATE_GPS
   /* Simulation: a potentiometer replaces the resistor divider, so map the raw
    * ADC reading straight onto 0-100%. Turning the knob then behaves like a
    * battery gauge. A real divider never spans the full ADC range this way. */
   long raw = 0;
   for (int i = 0; i < 8; i++) raw += analogRead(BATTERY_PIN);
-  long pct = map(raw / 8, 0, 4095, 0, 100);
-  return (int) constrain(pct, 0L, 100L);
+  doc["battery_pct"] = (int) constrain(map(raw / 8, 0, 4095, 0, 100), 0L, 100L);
 #else
-  /* analogReadMilliVolts applies the chip's factory ADC calibration; the raw count alone can be
-   * off by a tenth of a volt, a large part of the battery's 0.9 V range. */
-  long mv = 0;
-  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(BATTERY_PIN);
-  return liIonPct((mv / 8) / 1000.0f * BATTERY_DIVIDER_RATIO);
+  const float v = readBatteryVolts();
+  const bool present = v >= BATTERY_ABSENT_BELOW_V;
+  doc["battery_mv"] = (int) (v * 1000.0f + 0.5f);
+  if (present) doc["battery_pct"] = liIonPct(v);
+
+  static unsigned long lastPrintMs = 0;
+  if (lastPrintMs == 0 || millis() - lastPrintMs >= 60000UL) {
+    lastPrintMs = millis();
+    if (present) Serial.printf("[batt] %.2f V = %d%%\n", v, liIonPct(v));
+    else Serial.printf("[batt] %.2f V: no battery measured (USB power with the switch off, no cell, or a loose "
+                       "divider wire on D%d) - not reported as a level\n", v, BATTERY_PIN);
+  }
 #endif
 }
 #endif
@@ -743,7 +767,7 @@ int sendStatus(const char* line) {
   doc["satellites_used"] = satellitesUsed();
   doc["rssi"] = WiFi.RSSI();
 #if HAS_BATTERY_MONITOR
-  doc["battery_pct"] = readBatteryPct(); /* so a tracker with no fix (indoors) still warns before it dies */
+  addBattery(doc); /* so a tracker with no fix (indoors) still warns before it dies */
 #endif
   String body;
   serializeJson(doc, body);
@@ -1235,7 +1259,7 @@ void loop() {
   if (gps.altitude.isValid()) doc["altitude_meters"] = gps.altitude.meters();
   if (gps.satellites.isValid()) doc["satellites"] = gps.satellites.value();
 #if HAS_BATTERY_MONITOR
-  doc["battery_pct"] = readBatteryPct();
+  addBattery(doc);
 #endif
 
   String body;

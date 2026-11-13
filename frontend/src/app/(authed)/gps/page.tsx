@@ -317,7 +317,7 @@ export default function GpsPage() {
 
                       {/* Right: Battery, Geofence Alert, More details toggle */}
                       <div className="flex items-center gap-2.5 shrink-0">
-                        <BatteryBadge pct={i.battery_pct} />
+                        <BatteryBadge pct={i.battery_pct} absent={i.battery_absent} />
                         {(i.needs_attention ?? i.inside_geofence === false) && (
                           <span title="Needs attention" className="inline-flex text-amber-400">
                             <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
@@ -378,7 +378,7 @@ export default function GpsPage() {
                             </div>
                           )}
 
-                          <BatteryDetails pct={i.battery_pct} reportedAt={i.battery_reported_at} label="Battery Level" />
+                          <BatteryDetails pct={i.battery_pct} mv={i.battery_mv} absent={i.battery_absent} reportedAt={i.battery_reported_at} label="Battery Level" />
 
                           {i.telemetry_source !== "placeholder" && (
                             <div className="flex justify-between items-center">
