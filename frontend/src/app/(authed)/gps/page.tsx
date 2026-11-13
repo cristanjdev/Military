@@ -6,8 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ShieldCheck, AlertTriangle, Search, X, ChevronDown, ChevronUp, User } from "lucide-react";
 import { api } from "@/lib/api";
 import { fmtRelative, cn } from "@/lib/utils";
-import { TRIP_STAGE_LABEL, type TripStage } from "@/lib/trip";
-import { BatteryBadge, BatteryDetails } from "@/components/gps/battery-status";
+import { BatteryBadge, BatterySummary } from "@/components/gps/battery-status";
 
 const LiveMap = dynamic(() => import("@/components/maps/live-map").then((m) => m.LiveMap), { ssr: false });
 const RouteHistoryMap = dynamic(() => import("@/components/maps/route-history-map").then((m) => m.RouteHistoryMap), { ssr: false });
@@ -130,7 +129,8 @@ export default function GpsPage() {
             </div>
 
             {/* Quick Telemetry Filters */}
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 no-scrollbar text-[10px]">
+            {/* Wraps onto a second line on a narrow panel instead of scrolling sideways */}
+            <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
               <button
                 type="button"
                 onClick={() => setFilterStatus("all")}
@@ -304,9 +304,10 @@ export default function GpsPage() {
                       {/* Personnel name with subtle user icon, no "Issued to" text */}
                       <div className="flex items-center gap-1.5 text-steel-300 min-w-0 pr-2">
                         <User className="h-3.5 w-3.5 text-steel-400 shrink-0" />
+                        {/* Full name, wrapping when long (the only place it is shown) */}
                         <span
                           className={cn(
-                            "text-xs truncate",
+                            "text-xs leading-snug line-clamp-2 [overflow-wrap:anywhere]",
                             i.assigned_to ? "text-steel-100 font-semibold" : "text-steel-400 italic"
                           )}
                           title={i.assigned_to ?? "Unassigned"}
@@ -355,63 +356,48 @@ export default function GpsPage() {
                         className="mt-3 pt-2.5 border-t border-steel-800/70 space-y-2 animate-fade-in text-[11px]"
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <div className="space-y-1.5">
-                          <div className="flex justify-between items-center">
-                            <span className="text-steel-400">{i.repair ? "Received for Repair" : "Personnel"}</span>
-                            <span className="text-steel-200 font-medium truncate max-w-[170px] text-right" title={i.assigned_to ?? "Unassigned"}>
-                              {i.assigned_to ?? "Unassigned"}
-                            </span>
-                          </div>
-                          {i.condition && (
-                            <div className="flex justify-between items-center">
-                              <span className="text-steel-400">Condition</span>
-                              <span className="text-steel-200 font-medium">{i.condition}</span>
-                            </div>
-                          )}
+                        {/* Labels above values, two columns; long values get a full row */}
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2.5">
+                          {i.condition && <PanelField label="Condition">{i.condition}</PanelField>}
 
                           {i.device_id && (
-                            <div className="flex justify-between items-center">
-                              <span className="text-steel-400">Device ID</span>
-                              <span className="font-mono text-[10px] text-steel-200">
-                                {i.device_id}
-                              </span>
-                            </div>
+                            <PanelField label="Device">
+                              <span className="font-mono text-[11px]">{i.device_id}</span>
+                            </PanelField>
                           )}
 
-                          <BatteryDetails pct={i.battery_pct} mv={i.battery_mv} absent={i.battery_absent} reportedAt={i.battery_reported_at} label="Battery Level" />
+                          <PanelField label="Battery" wide>
+                            <BatterySummary pct={i.battery_pct} mv={i.battery_mv} absent={i.battery_absent} reportedAt={i.battery_reported_at} />
+                          </PanelField>
 
                           {i.telemetry_source !== "placeholder" && (
-                            <div className="flex justify-between items-center">
-                              <span className="text-steel-400">Geofence Status</span>
+                            <PanelField label={i.destination ? "Route" : "Geofence"} wide>
                               {i.destination ? (
-                                <span className={cn(
-                                  "inline-flex items-center gap-1 text-[10px] font-semibold text-right",
-                                  i.needs_attention ? "text-amber-400" : "text-emerald-400"
-                                )}>
+                                <span
+                                  className={cn("inline-flex items-center gap-1.5 max-w-full", i.needs_attention ? "text-amber-400" : "text-emerald-400")}
+                                  title={`${i.needs_attention ? "Off route" : "On route"} to ${i.destination}`}
+                                >
                                   {i.needs_attention
                                     ? <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
                                     : <ShieldCheck className="h-3.5 w-3.5 shrink-0" />}
-                                  {i.needs_attention ? "Off route" : "On route"} · {i.destination}
-                                  {i.trip_stage ? ` (${TRIP_STAGE_LABEL[i.trip_stage as TripStage]})` : ""}
+                                  <span className="truncate">{i.needs_attention ? "Off route" : "On route"} · {i.destination}</span>
                                 </span>
                               ) : i.inside_geofence ? (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-400">
-                                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
-                                  Inside Zone
+                                <span className="inline-flex items-center gap-1.5 text-emerald-400">
+                                  <ShieldCheck className="h-3.5 w-3.5 shrink-0" />
+                                  Inside a zone
                                 </span>
                               ) : (
-                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-400">
-                                  <AlertTriangle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
-                                  Outside Zone
+                                <span className="inline-flex items-center gap-1.5 text-amber-400">
+                                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                                  Outside all zones
                                 </span>
                               )}
-                            </div>
+                            </PanelField>
                           )}
 
                           {i.location_note && (
-                            <p className="text-[10px] text-steel-400/90 leading-tight pt-1 border-t border-steel-800/50" title={i.location_note}>
-                              {i.location_note}
-                            </p>
+                            <p className="col-span-2 m-0 text-[10px] text-steel-400 leading-snug">{i.location_note}</p>
                           )}
                         </div>
 
@@ -456,4 +442,14 @@ function telemetryLabel(source: string): string {
   if (source === "stale") return "Last Known";
   if (source === "placeholder") return "Placeholder";
   return "Missing";
+}
+
+/** One labelled value in an expanded firearm card; `wide` spans both columns. */
+function PanelField({ label, wide = false, children }: { label: string; wide?: boolean; children: React.ReactNode }) {
+  return (
+    <div className={cn("min-w-0", wide && "col-span-2")}>
+      <div className="text-[10px] text-steel-500 mb-0.5">{label}</div>
+      <div className="text-[12px] font-medium text-steel-200 truncate">{children}</div>
+    </div>
+  );
 }
