@@ -5,14 +5,24 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Circle, ClipboardCheck, Hammer, Loader2,
-  MapPin, Plus, Send, ShieldCheck, Undo2, X, XCircle,
+  AlertTriangle, Check, CheckCircle2, ChevronLeft, ChevronRight, Circle, ClipboardCheck, Clock, Hammer, Loader2,
+  MapPin, Plus, Send, ShieldCheck, Undo2, X, XCircle, type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { fmtDate, fmtPeso, wholePesoInput, MAINTENANCE_RESULTS } from "@/lib/utils";
+import { cn, fmtDate, fmtPeso, wholePesoInput, MAINTENANCE_RESULTS } from "@/lib/utils";
 import { DataError } from "@/components/ui/data-error";
+import { HelpBubble } from "@/components/ui/help-bubble";
 import { useAuthStore, hasRole } from "@/store/auth";
+
+/** The repair approval flow, shown in the "?" bubble next to the section title. */
+const REPAIR_STEPS = [
+  "The Armory Custodian reports the firearm for repair.",
+  "The S4 Officer reviews it and forwards it to the Command Officer.",
+  "The Command Officer approves or rejects the repair.",
+  "The S4 Officer informs the Custodian of the decision.",
+  "The Custodian sends the firearm for repair and records its return.",
+];
 
 /* Backend: RepairRequest::STATUS_*. */
 export const REPAIR_STATUSES: Record<string, { label: string; tone: string }> = {
@@ -90,7 +100,7 @@ export function RepairRequests() {
   const isS4 = hasRole(user, "S4 Officer");
   const isCommander = hasRole(user, "Command Officer");
 
-  const [filter, setFilter] = useState<"open" | "all" | "completed" | "rejected">("open");
+  const [filter, setFilter] = useState<Filter>("open");
   const [page, setPage] = useState(1);
   const [dialog, setDialog] = useState<{ kind: DialogKind; repair?: Repair } | null>(null);
 
@@ -106,7 +116,7 @@ export function RepairRequests() {
   };
 
   /** The one action this user can take on a repair now, if any. */
-  function actionFor(r: Repair): { kind: DialogKind; label: string; Icon: any } | null {
+  function actionFor(r: Repair): { kind: DialogKind; label: string; Icon: LucideIcon } | null {
     if (isS4 && r.status === "reported") return { kind: "forward", label: "Forward to Commander", Icon: Send };
     if (isCommander && r.status === "forwarded") return { kind: "decide", label: "Approve / Reject", Icon: ShieldCheck };
     if (isS4 && (r.status === "approved" || r.status === "rejected") && !r.custodian_informed_at)
@@ -130,86 +140,103 @@ export function RepairRequests() {
     }
   }
 
+  // How many repairs each tab holds (one small request per tab; "repairs" invalidations refresh them too).
+  const { data: counts } = useQuery({
+    queryKey: ["repairs", "counts"],
+    queryFn: async () => {
+      const res = await Promise.all(FILTERS.map(([key]) =>
+        api.get("/repairs", { params: { per_page: 1, status: key === "all" ? undefined : key } })));
+      return Object.fromEntries(FILTERS.map(([key], i) => [key, Number(res[i].data.total ?? 0)])) as Record<Filter, number>;
+    },
+  });
+
   return (
     <div className="space-y-4">
-      <div className="glass rounded-xl p-4 space-y-3">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-          <div>
-            <p className="section-title flex items-center gap-2"><Hammer className="h-4 w-4" /> Repair Requests</p>
-            <p className="text-xs text-steel-400 mt-1">
-              Custodian reports to S4 → S4 forwards to the Commander → Commander approves → S4 informs the Custodian → Custodian sends it for repair.
-              The firearm&apos;s status changes only when it comes back.
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-1.5">
+          <p className="section-title flex items-center gap-2"><Hammer className="h-4 w-4" /> Repair Requests</p>
+          <HelpBubble title="How a repair request works" label="How a repair request works">
+            <ol className="space-y-2">
+              {REPAIR_STEPS.map((step, i) => (
+                <li key={i} className="flex gap-2.5">
+                  <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-olive-600/50 text-[10px] font-semibold text-olive-200">
+                    {i + 1}
+                  </span>
+                  <span className="pt-px">{step}</span>
+                </li>
+              ))}
+            </ol>
+            <p className="mt-3 border-t border-steel-800 pt-2.5 text-steel-400">
+              The firearm keeps its current status until it is back from repair.
             </p>
-          </div>
-          {isCustodian && (
-            <button onClick={() => setDialog({ kind: "report" })} className="btn-primary text-xs shrink-0">
-              <Plus className="h-4 w-4" /> Report for Repair
-            </button>
-          )}
+          </HelpBubble>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {(["open", "all", "completed", "rejected"] as const).map((f) => (
-            <button key={f} onClick={() => { setFilter(f); setPage(1); }}
-                    className={`px-3 py-1.5 rounded-md text-[11px] uppercase tracking-widest transition-all ${
-                      filter === f ? "bg-olive-700/40 text-olive-100 border border-olive-500/40" : "text-steel-400 hover:text-olive-200"
-                    }`}>
-              {f === "open" ? "In Progress" : f === "completed" ? "Back from Maintenance" : f}
-            </button>
-          ))}
-        </div>
+        {isCustodian && (
+          <button onClick={() => setDialog({ kind: "report" })} className="btn-primary text-xs shrink-0 self-start sm:self-auto">
+            <Plus className="h-4 w-4" /> Report for Repair
+          </button>
+        )}
+      </div>
+
+      {/* Status tabs with counts, as on the Requests page */}
+      <div className="flex flex-wrap gap-1 border-b border-steel-800" role="tablist" aria-label="Repair status">
+        {FILTERS.map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={filter === key}
+            onClick={() => { setFilter(key); setPage(1); }}
+            className={cn(
+              "-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition",
+              filter === key ? "border-olive-400 text-olive-50" : "border-transparent text-steel-400 hover:text-steel-200"
+            )}
+          >
+            {label}
+            {counts && (
+              <span
+                className={cn(
+                  "rounded-full px-1.5 py-px text-[10px] font-semibold",
+                  key === "open" && counts.open > 0 ? "bg-amber-500/20 text-amber-300" : "bg-steel-800 text-steel-400"
+                )}
+              >
+                {counts[key]}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
 
       {isError && <DataError onRetry={refetch} />}
-      {isLoading && !isError && <p className="text-center py-8 text-steel-400 text-sm">Loading…</p>}
+      {isLoading && !isError && <p className="py-8 text-center text-sm text-steel-400">Loading…</p>}
       {!isLoading && !isError && (data?.data?.length ?? 0) === 0 && (
-        <p className="glass rounded-xl text-center py-10 text-steel-500 text-xs">No repair requests here.</p>
+        <div className="glass rounded-xl p-10 text-center text-sm text-steel-400">
+          {filter === "open" ? "No repairs in progress." : filter === "completed" ? "No firearm is back from repair yet." : filter === "rejected" ? "No rejected repairs." : "No repair requests yet."}
+        </div>
       )}
 
-      {data?.data?.map((r: Repair) => {
-        const action = actionFor(r);
-        const waiting = waitingFor(r);
-        return (
-          <div key={r.repair_id} className="glass rounded-xl p-4 space-y-3">
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Link href={`/firearms/${r.equipment_id}`} className="font-mono font-bold text-olive-100 hover:text-olive-300">
-                    {r.firearm?.serial_number ?? `#${r.equipment_id}`}
-                  </Link>
-                  <span className="text-xs text-steel-400">{r.firearm?.model}</span>
-                  <span className={`pill text-[10px] ${REPAIR_STATUSES[r.status]?.tone ?? "pill-muted"}`}>{REPAIR_STATUSES[r.status]?.label ?? r.status}</span>
-                  <span className="text-[10px] text-steel-500 font-mono">Request #{r.repair_id}</span>
-                </div>
-                <p className="text-sm text-steel-200 mt-1 break-words">{r.problem}</p>
-              </div>
-              <div className="flex flex-col items-start sm:items-end gap-1 shrink-0">
-                {action && (
-                  <button onClick={() => setDialog({ kind: action.kind, repair: r })} className="btn-primary text-xs">
-                    <action.Icon className="h-4 w-4" /> {action.label}
-                  </button>
-                )}
-                {!action && waiting && <p className="text-[11px] text-amber-300/90">{waiting}</p>}
-                {r.status === "in_repair" && (
-                  <Link href="/gps" className="text-[11px] text-olive-300 hover:text-olive-200 flex items-center gap-1">
-                    <MapPin className="h-3 w-3" /> Track on the map
-                  </Link>
-                )}
-              </div>
-            </div>
-            <RepairTimeline repair={r} />
-          </div>
-        );
-      })}
+      {data?.data?.map((r: Repair) => (
+        <RepairCard
+          key={r.repair_id}
+          repair={r}
+          action={actionFor(r)}
+          waiting={waitingFor(r)}
+          onAction={(kind) => setDialog({ kind, repair: r })}
+        />
+      ))}
 
       {data && data.last_page > 1 && (
-        <div className="flex items-center justify-end gap-2">
-          <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="btn-ghost p-1.5 disabled:opacity-30">
-            <ChevronLeft className="h-4 w-4" />
-          </button>
-          <span className="text-xs text-steel-400 font-mono">Page {page} / {data.last_page}</span>
-          <button onClick={() => setPage((p) => Math.min(data.last_page, p + 1))} disabled={page === data.last_page} className="btn-ghost p-1.5 disabled:opacity-30">
-            <ChevronRight className="h-4 w-4" />
-          </button>
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-steel-400">{data.from}–{data.to} of {data.total} repairs</p>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} className="btn-ghost p-1.5 disabled:opacity-30" aria-label="Previous page">
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <span className="text-xs text-steel-400">Page {page} of {data.last_page}</span>
+            <button onClick={() => setPage((p) => Math.min(data.last_page, p + 1))} disabled={page === data.last_page} className="btn-ghost p-1.5 disabled:opacity-30" aria-label="Next page">
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       )}
 
@@ -223,6 +250,181 @@ export function RepairRequests() {
       )}
     </div>
   );
+}
+
+type Filter = "open" | "all" | "completed" | "rejected";
+const FILTERS: [Filter, string][] = [
+  ["open", "In Progress"],
+  ["completed", "Back from Repair"],
+  ["rejected", "Rejected"],
+  ["all", "All"],
+];
+
+/** One repair: the firearm and problem, where it stands, the facts so far, and what happens next. */
+function RepairCard({
+  repair: r,
+  action,
+  waiting,
+  onAction,
+}: {
+  repair: Repair;
+  action: { kind: DialogKind; label: string; Icon: LucideIcon } | null;
+  waiting: string | null;
+  onAction: (kind: DialogKind) => void;
+}) {
+  const status = REPAIR_STATUSES[r.status];
+  const facts = repairFacts(r);
+
+  return (
+    <article className="glass rounded-xl overflow-hidden">
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-steel-400">
+            <Link href={`/firearms/${r.equipment_id}`} className="font-mono text-sm font-semibold text-olive-100 hover:text-olive-300">
+              {r.firearm?.serial_number ?? `#${r.equipment_id}`}
+            </Link>
+            {r.firearm?.model && <span className="text-xs text-steel-400">{r.firearm.model}</span>}
+            <span className="text-steel-600">·</span>
+            <span className="font-mono">Repair #{r.repair_id}</span>
+          </p>
+          <h3 className="mt-1.5 text-base font-semibold text-olive-50 break-words">{r.problem}</h3>
+          <p className="mt-0.5 text-xs text-steel-400">
+            Reported by <span className="text-steel-200">{personName(r.reporter)}</span> on {fmtDate(r.reported_at, LONG_DATE)}
+          </p>
+        </div>
+        <span className={cn("pill text-[10px] uppercase self-start shrink-0", status?.tone ?? "pill-muted")}>
+          {status?.label ?? r.status}
+        </span>
+      </div>
+
+      <div className="space-y-4 px-4 pb-4 sm:px-5 sm:pb-5">
+        <RepairProgress repair={r} />
+
+        {/* Notes on the left; the estimated cost on the right, level with the last note */}
+        {(facts.length > 0 || r.estimated_cost != null) && (
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between sm:gap-6">
+            <dl className="grid min-w-0 flex-1 gap-x-6 gap-y-2.5 sm:grid-cols-2">
+              {facts.map((f) => (
+                <div key={f.label} className="min-w-0">
+                  <dt className="text-[10px] text-steel-500">{f.label}</dt>
+                  <dd className="text-xs text-steel-200 break-words">{f.value}</dd>
+                </div>
+              ))}
+            </dl>
+            {r.estimated_cost != null && (
+              <div className="shrink-0 sm:text-right">
+                <p className="text-[10px] text-steel-500">Estimated cost</p>
+                <p className="text-base font-semibold text-olive-50">{fmtPeso(r.estimated_cost)}</p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {(action || waiting || r.status === "in_repair") && (
+        <footer className="flex flex-col gap-3 border-t border-steel-800/80 bg-steel-950/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+          {/* Left: what the repair is waiting for */}
+          <div className="text-xs">
+            {!action && waiting && (
+              <span className="flex items-center gap-2 text-amber-300/90">
+                <Clock className="h-4 w-4 shrink-0" aria-hidden /> {waiting}
+              </span>
+            )}
+          </div>
+          {/* Right: the buttons */}
+          <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto sm:justify-end">
+            {r.status === "in_repair" && (
+              <Link href="/gps" className="btn-secondary text-xs no-underline">
+                <MapPin className="h-4 w-4" /> Track on the map
+              </Link>
+            )}
+            {action && (
+              <button onClick={() => onAction(action.kind)} className="btn-primary text-xs shrink-0">
+                <action.Icon className="h-4 w-4" /> {action.label}
+              </button>
+            )}
+          </div>
+        </footer>
+      )}
+    </article>
+  );
+}
+
+/** "November 14, 2026 at 9:15 AM" */
+const LONG_DATE = "MMMM d, yyyy 'at' h:mm a";
+
+/** The approval steps as a row of dots: done (check), current (ring), not yet (grey). */
+function RepairProgress({ repair: r }: { repair: Repair }) {
+  const rejected = r.status === "rejected";
+  const stages = [
+    { label: "Reported", at: r.reported_at },
+    { label: "Forwarded", at: r.forwarded_at },
+    { label: rejected ? "Rejected" : "Approved", at: r.decided_at, failed: rejected },
+    { label: "Custodian informed", at: r.custodian_informed_at },
+    ...(rejected ? [] : [
+      { label: "Sent for repair", at: r.sent_at },
+      { label: "Back from repair", at: r.returned_at },
+    ]),
+  ];
+  const current = stages.findIndex((s) => !s.at);
+
+  return (
+    <ol className="grid grid-cols-2 gap-y-3 sm:flex sm:gap-0">
+      {stages.map((s, i) => {
+        const done = !!s.at;
+        const isCurrent = i === current;
+        return (
+          <li key={s.label} className="relative flex min-w-0 flex-1 items-start gap-2 sm:flex-col sm:items-center sm:gap-1.5 sm:text-center">
+            {/* The line joining this step to the next (wide screens) */}
+            {i < stages.length - 1 && (
+              <span
+                className={cn("absolute left-1/2 top-2.5 hidden h-px w-full sm:block", stages[i + 1].at ? "bg-olive-500/60" : "bg-steel-700")}
+                aria-hidden
+              />
+            )}
+            <span
+              className={cn(
+                "relative z-[1] flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+                s.failed && done
+                  ? "border-red-500/60 bg-red-500/15 text-red-300"
+                  : done
+                  ? "border-olive-500/60 bg-olive-600 text-white"
+                  : isCurrent
+                  ? "border-amber-400/70 bg-steel-900 text-amber-300"
+                  : "border-steel-700 bg-steel-900 text-steel-600"
+              )}
+            >
+              {s.failed && done ? <X className="h-3 w-3" /> : done ? <Check className="h-3 w-3" /> : <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+            </span>
+            <span className="min-w-0">
+              <span className={cn("block text-[11px] leading-tight", done ? "text-steel-200" : isCurrent ? "text-amber-200" : "text-steel-500")}>
+                {s.label}
+              </span>
+              <span className="block text-[10px] text-steel-500">{done ? fmtDate(s.at, "MMM d") : isCurrent ? "Next" : ""}</span>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/** The details recorded so far, in plain words; empty ones are left out. */
+function repairFacts(r: Repair): { label: string; value: string }[] {
+  const facts: { label: string; value: string | null }[] = [
+    { label: "Date damaged", value: r.damaged_at ? fmtDate(r.damaged_at, "MMMM d, yyyy") : null },
+    { label: "S4 Officer's note", value: r.s4_notes },
+    { label: r.status === "rejected" ? "Reason for rejection" : "Command Officer's note", value: r.decision_note },
+    { label: "Repaired by", value: r.received_by ? `${r.received_by}${r.received_by_unit ? `, ${r.received_by_unit}` : ""}` : null },
+    { label: "Work done", value: r.work_done },
+    {
+      label: "Result",
+      value: r.result_status
+        ? `${MAINTENANCE_RESULTS[r.result_status]?.label ?? "—"}${r.cost ? ` · ${fmtPeso(r.cost)}` : ""}`
+        : null,
+    },
+  ];
+  return facts.filter((f): f is { label: string; value: string } => !!f.value);
 }
 
 /** Every step with its date; steps not reached yet are dimmed. */

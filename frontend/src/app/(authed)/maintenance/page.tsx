@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Wrench, Loader2, Calendar, AlertTriangle, CheckCircle, X, ChevronLeft, ChevronRight, Hammer } from "lucide-react";
+import Link from "next/link";
+import { Plus, Wrench, Loader2, Calendar, AlertTriangle, CheckCircle, Clock, X, ChevronLeft, ChevronRight, Hammer } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { fmtDate, fmtPeso, wholePesoInput, CONDITIONS, MAINTENANCE_RESULTS } from "@/lib/utils";
+import { cn, fmtDate, fmtPeso, wholePesoInput, CONDITIONS, MAINTENANCE_RESULTS } from "@/lib/utils";
 import { DataError } from "@/components/ui/data-error";
 import { RepairRequests } from "@/components/maintenance/repair-requests";
 import { useAuthStore, hasRole } from "@/store/auth";
@@ -75,38 +76,40 @@ export default function MaintenancePage() {
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-olive-50 flex items-center gap-2"><Wrench className="h-5 w-5 text-olive-300" /> Maintenance</h1>
+          <p className="text-sm text-steel-400">{TAB_INFO[tab]}</p>
         </div>
         {canRecord && tab !== "repairs" && (
           <button onClick={() => setShowForm((s) => !s)} className="btn-primary"><Plus className="h-4 w-4" /> New Record</button>
         )}
       </div>
 
-      {/* Tab switcher */}
-      <div className="flex gap-1 flex-wrap">
-        <button
-          onClick={() => setTab("repairs")}
-          className={`px-4 py-2 rounded-md text-xs uppercase tracking-widest transition-all ${
-            tab === "repairs" ? "bg-olive-700/40 text-olive-100 border border-olive-500/40" : "text-steel-400 hover:text-olive-200"
-          }`}
-        >
-          <Hammer className="h-3.5 w-3.5 inline mr-1.5" /> Repairs
-        </button>
-        <button
-          onClick={() => setTab("history")}
-          className={`px-4 py-2 rounded-md text-xs uppercase tracking-widest transition-all ${
-            tab === "history" ? "bg-olive-700/40 text-olive-100 border border-olive-500/40" : "text-steel-400 hover:text-olive-200"
-          }`}
-        >
-          <Wrench className="h-3.5 w-3.5 inline mr-1.5" /> History
-        </button>
-        <button
-          onClick={() => setTab("schedule")}
-          className={`px-4 py-2 rounded-md text-xs uppercase tracking-widest transition-all ${
-            tab === "schedule" ? "bg-olive-700/40 text-olive-100 border border-olive-500/40" : "text-steel-400 hover:text-olive-200"
-          }`}
-        >
-          <Calendar className="h-3.5 w-3.5 inline mr-1.5" /> Schedule
-        </button>
+      {/* Section switcher: one segmented group of buttons */}
+      <div
+        className="inline-flex w-full sm:w-auto rounded-lg border border-steel-700/70 bg-steel-900/60 p-1 gap-1"
+        role="tablist"
+        aria-label="Maintenance sections"
+      >
+        {([
+          ["repairs", "Repairs", Hammer],
+          ["history", "History", Wrench],
+          ["schedule", "Schedule", Calendar],
+        ] as const).map(([key, label, Icon]) => (
+          <button
+            key={key}
+            type="button"
+            role="tab"
+            aria-selected={tab === key}
+            onClick={() => setTab(key)}
+            className={cn(
+              "inline-flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-md px-4 py-1.5 text-sm font-medium transition",
+              tab === key
+                ? "bg-olive-600 text-white shadow-sm"
+                : "text-steel-300 hover:bg-steel-800 hover:text-steel-100"
+            )}
+          >
+            <Icon className="h-4 w-4 shrink-0" /> {label}
+          </button>
+        ))}
       </div>
 
       {showForm && createPortal(
@@ -210,158 +213,173 @@ export default function MaintenancePage() {
 
       {tab === "repairs" && <RepairRequests />}
 
-      {/* Schedule Tab */}
+      {/* Schedule: overdue first, then this week, then later */}
       {tab === "schedule" && (
-        <div className="glass rounded-xl p-4">
-          <p className="section-title mb-3 flex items-center gap-2"><Calendar className="h-4 w-4" /> Upcoming Maintenance Schedule</p>
+        <div className="space-y-6">
           {upcomingMaintenance.length === 0 && (
-            <p className="text-steel-400 text-sm py-4 text-center">No scheduled maintenance.</p>
+            <div className="glass rounded-xl p-10 text-center text-sm text-steel-400">No maintenance is scheduled.</div>
           )}
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {upcomingMaintenance.map((item: any) => (
-              <div
-                key={item.equipment_id}
-                className={`rounded-lg border p-4 ${
-                  item.is_overdue
-                    ? "border-red-600/50 bg-red-900/10"
-                    : item.days_until <= 3
-                    ? "border-amber-600/50 bg-amber-900/10"
-                    : "border-olive-700/30 bg-steel-900/40"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-bold text-olive-100 font-mono">{item.serial_number}</p>
-                    <p className="text-xs text-steel-400">{item.model}</p>
-                  </div>
-                  {item.is_overdue ? (
-                    <AlertTriangle className="h-4 w-4 text-red-400 shrink-0" />
-                  ) : item.days_until <= 3 ? (
-                    <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
-                  ) : (
-                    <CheckCircle className="h-4 w-4 text-olive-400 shrink-0" />
-                  )}
+          {SCHEDULE_GROUPS.map((g) => {
+            const items = upcomingMaintenance.filter(g.match);
+            if (items.length === 0) return null;
+            return (
+              <section key={g.key}>
+                <h2 className={cn("mb-2 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider", g.heading)}>
+                  <g.Icon className="h-3.5 w-3.5" /> {g.label}
+                  <span className="rounded-full bg-steel-800 px-1.5 py-px text-[10px] text-steel-400">{items.length}</span>
+                </h2>
+                <div className="glass rounded-xl overflow-hidden">
+                  {/* Wide screens: a table like History; fixed column widths so every group lines up */}
+                  <table className="hidden w-full table-fixed text-sm md:table">
+                    <colgroup>
+                      <col className="w-[28%]" /><col className="w-[24%]" /><col className="w-[16%]" /><col className="w-[16%]" /><col className="w-[16%]" />
+                    </colgroup>
+                    <thead className="bg-steel-900/50 text-[11px] text-steel-400">
+                      <tr>
+                        <th className="px-5 py-2.5 text-left font-semibold">Firearm</th>
+                        <th className="px-3 py-2.5 text-center font-semibold">Model</th>
+                        <th className="px-3 py-2.5 text-center font-semibold">Condition</th>
+                        <th className="px-3 py-2.5 text-center font-semibold">Due date</th>
+                        <th className="px-5 py-2.5 text-center font-semibold">Time left</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-steel-800/70">
+                      {items.map((item: ScheduleItem) => (
+                        <tr key={item.equipment_id} className="hover:bg-steel-800/20 transition-colors">
+                          <td className="px-5 py-3">
+                            <Link href={`/firearms/${item.equipment_id}`} className="font-mono text-sm font-semibold text-olive-100 hover:text-olive-300">
+                              {item.serial_number}
+                            </Link>
+                          </td>
+                          <td className="truncate px-3 py-3 text-center text-xs text-steel-300" title={item.model}>{item.model}</td>
+                          <td className="px-3 py-3 text-center">
+                            {CONDITIONS[item.condition] && (
+                              <span className={cn("pill text-[10px]", CONDITIONS[item.condition].tone)}>{CONDITIONS[item.condition].label}</span>
+                            )}
+                          </td>
+                          <td className="whitespace-nowrap px-3 py-3 text-center text-xs text-steel-200">{fmtDate(item.due_date, "MMMM d, yyyy")}</td>
+                          <td className={cn("whitespace-nowrap px-5 py-3 text-center text-xs font-medium", dueTone(item))}>
+                            {dueText(item.days_until)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  {/* Phones: one card per firearm */}
+                  <ul className="divide-y divide-steel-800/70 md:hidden">
+                    {items.map((item: ScheduleItem) => (
+                      <li key={item.equipment_id} className="space-y-1 px-4 py-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <Link href={`/firearms/${item.equipment_id}`} className="font-mono text-sm font-semibold text-olive-100 hover:text-olive-300">
+                              {item.serial_number}
+                            </Link>
+                            <span className="ml-2 text-xs text-steel-400">{item.model}</span>
+                          </div>
+                          {CONDITIONS[item.condition] && (
+                            <span className={cn("pill shrink-0 text-[10px]", CONDITIONS[item.condition].tone)}>{CONDITIONS[item.condition].label}</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-steel-300">
+                          {fmtDate(item.due_date, "MMMM d, yyyy")} · <span className={cn("font-medium", dueTone(item))}>{dueText(item.days_until)}</span>
+                        </p>
+                      </li>
+                    ))}
+                  </ul>
                 </div>
-                <div className="mt-2 space-y-1">
-                  <p className="text-xs text-steel-300">
-                    Due: <span className={item.is_overdue ? "text-red-300 font-semibold" : "text-olive-200"}>
-                      {fmtDate(item.due_date, "yyyy-MM-dd")}
-                    </span>
-                  </p>
-                  <p className="text-xs text-steel-400">
-                    {item.is_overdue
-                      ? `Overdue by ${Math.abs(item.days_until)} day(s)`
-                      : `In ${item.days_until} day(s)`}
-                  </p>
-                  <span className={`pill ${CONDITIONS[item.condition]?.tone}`}>
-                    {CONDITIONS[item.condition]?.label}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+              </section>
+            );
+          })}
         </div>
       )}
 
-      {/* History Tab */}
+      {/* History: newest first */}
       {tab === "history" && (
-        <div className="glass rounded-xl p-4 overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-widest text-olive-300">
-                <th className="text-left py-2.5">Date</th>
-                <th className="text-center">Firearm</th>
-                <th className="text-center">Type</th>
-                <th className="text-center px-3">Description</th>
-                <th className="text-center">Status After</th>
-                <th className="text-center">Done By</th>
-                <th className="text-center">Cost</th>
-              </tr>
-            </thead>
-            <tbody>
-              {isError && (
-                <tr>
-                  <td colSpan={7} className="py-0">
-                    <DataError onRetry={refetch} />
-                  </td>
-                </tr>
-              )}
-              {isLoading && !isError && (
-                <tr>
-                  <td colSpan={7} className="text-center py-8 text-steel-400">
-                    Loading…
-                  </td>
-                </tr>
-              )}
-              {!isLoading && !isError && (!data?.data || data.data.length === 0) && (
-                <tr>
-                  <td colSpan={7} className="text-center py-10 text-steel-500 text-xs">
-                    No maintenance records found.
-                  </td>
-                </tr>
-              )}
-              {data?.data?.map((m: any) => (
-                <tr key={m.maintenance_id} className="border-t border-steel-800/50 hover:bg-steel-800/20 transition-colors">
-                  <td className="py-2.5 text-xs text-steel-300 font-mono whitespace-nowrap">
-                    {fmtDate(m.maintenance_date, "yyyy-MM-dd")}
-                  </td>
-                  <td className="text-center font-mono text-olive-100 text-xs font-semibold whitespace-nowrap">
-                    {m.firearm?.serial_number ?? "—"}
-                  </td>
-                  <td className="text-center whitespace-nowrap">
-                    <span className={`pill text-[10px] ${maintenanceTypePill(m.maintenance_type)}`}>
-                      {m.maintenance_type}
-                    </span>
-                  </td>
-                  <td className="text-center text-xs text-steel-200 max-w-md px-3 py-2 leading-relaxed truncate" title={m.description}>
-                    {m.description}
-                  </td>
-                  <td className="text-center whitespace-nowrap">
-                    <span className={`pill text-[10px] ${MAINTENANCE_RESULTS[m.result_status]?.tone ?? "pill-muted"}`}>
-                      {MAINTENANCE_RESULTS[m.result_status]?.label ?? "—"}
-                    </span>
-                  </td>
-                  <td className="text-center text-xs text-steel-300 whitespace-nowrap">
-                    {m.repaired_by ? (
-                      <span title={`Recorded by ${[m.technician?.rank, m.technician?.first_name, m.technician?.last_name].filter(Boolean).join(" ")}`}>
-                        {m.repaired_by}
-                      </span>
-                    ) : (
-                      <>
-                        {m.technician?.rank ? `${m.technician.rank} ` : ""}
-                        {m.technician?.first_name} {m.technician?.last_name}
-                      </>
-                    )}
-                  </td>
-                  <td className="text-center font-mono text-xs text-steel-300 whitespace-nowrap">
-                    {Number(m.cost) > 0 ? fmtPeso(m.cost) : "—"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="glass rounded-xl overflow-hidden">
+          {isError && <div className="p-4"><DataError onRetry={refetch} /></div>}
+          {isLoading && !isError && <p className="py-8 text-center text-sm text-steel-400">Loading…</p>}
+          {!isLoading && !isError && (!data?.data || data.data.length === 0) && (
+            <p className="py-10 text-center text-sm text-steel-400">No maintenance records yet.</p>
+          )}
 
-          {/* Pagination */}
+          {data?.data?.length > 0 && (
+            <>
+              {/* Wide screens: a table */}
+              <table className="hidden w-full text-sm md:table">
+                <thead className="bg-steel-900/50 text-left text-[11px] font-semibold text-steel-400">
+                  <tr>
+                    <th className="px-5 py-2.5 font-semibold">Date</th>
+                    <th className="px-3 py-2.5 text-center font-semibold">Firearm</th>
+                    <th className="px-3 py-2.5 text-center font-semibold">Work done</th>
+                    <th className="px-3 py-2.5 text-center font-semibold">Result</th>
+                    <th className="px-3 py-2.5 text-center font-semibold">Done by</th>
+                    <th className="px-5 py-2.5 text-center font-semibold">Cost</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-steel-800/70">
+                  {data.data.map((m: any) => (
+                    <tr key={m.maintenance_id} className="align-middle hover:bg-steel-800/20 transition-colors">
+                      <td className="whitespace-nowrap px-5 py-3 text-xs text-steel-300">{fmtDate(m.maintenance_date, "MMM d, yyyy")}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-center">
+                        <FirearmCell firearm={m.firearm} />
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        <p className="text-xs font-medium text-steel-100">{m.maintenance_type}</p>
+                        <p className="mx-auto mt-0.5 max-w-md text-xs text-steel-400 break-words">{m.description}</p>
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-3 text-center"><ResultPill status={m.result_status} /></td>
+                      <td className="whitespace-nowrap px-3 py-3 text-center text-xs text-steel-300">{doneBy(m)}</td>
+                      <td className="whitespace-nowrap px-5 py-3 text-center text-xs text-steel-200">
+                        {Number(m.cost) > 0 ? fmtPeso(m.cost) : <span className="text-steel-600">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              {/* Phones: one card per record */}
+              <ul className="divide-y divide-steel-800/70 md:hidden">
+                {data.data.map((m: any) => (
+                  <li key={m.maintenance_id} className="space-y-1.5 px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <FirearmCell firearm={m.firearm} />
+                      <ResultPill status={m.result_status} />
+                    </div>
+                    <p className="text-xs text-steel-200">
+                      <span className="font-medium">{m.maintenance_type}</span>
+                      <span className="text-steel-400"> · {m.description}</span>
+                    </p>
+                    <p className="text-[11px] text-steel-500">
+                      {fmtDate(m.maintenance_date, "MMM d, yyyy")} · {doneBy(m)}
+                      {Number(m.cost) > 0 && <> · <span className="text-steel-300">{fmtPeso(m.cost)}</span></>}
+                    </p>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
           {data && data.last_page > 1 && (
-            <div className="mt-4 flex items-center justify-between border-t border-steel-800/50 pt-4">
-              <div className="text-xs text-steel-400">
-                Showing <span className="font-medium text-steel-200">{data.from || 0}</span> to <span className="font-medium text-steel-200">{data.to || 0}</span> of <span className="font-medium text-steel-200">{data.total}</span> entries
-              </div>
+            <div className="flex items-center justify-between border-t border-steel-800/70 px-5 py-3">
+              <p className="text-xs text-steel-400">
+                {data.from}–{data.to} of {data.total} records
+              </p>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page === 1 || isLoading}
                   className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label="Previous page"
                 >
                   <ChevronLeft className="h-4 w-4" />
                 </button>
-                <span className="text-xs text-steel-400 font-mono">
-                  Page {page} / {data.last_page}
-                </span>
+                <span className="text-xs text-steel-400">Page {page} of {data.last_page}</span>
                 <button
                   onClick={() => setPage((p) => Math.min(data.last_page, p + 1))}
                   disabled={page === data.last_page || isLoading}
                   className="btn-ghost p-1.5 disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label="Next page"
                 >
                   <ChevronRight className="h-4 w-4" />
                 </button>
@@ -374,17 +392,57 @@ export default function MaintenancePage() {
   );
 }
 
-function maintenanceTypePill(type: string) {
-  switch (type?.toLowerCase()) {
-    case "inspection":
-      return "pill-info";
-    case "repair":
-      return "pill-warn";
-    case "cleaning":
-      return "pill-ok";
-    case "calibration":
-      return "pill-tactical";
-    default:
-      return "pill-muted";
-  }
+/** The one-line description under the page title, per section. */
+const TAB_INFO = {
+  repairs: "Repair requests for damaged firearms, from report to return.",
+  history: "Every inspection, cleaning, calibration and repair recorded for the firearms.",
+  schedule: "When each firearm is next due for maintenance.",
+} as const;
+
+interface ScheduleItem {
+  equipment_id: number;
+  serial_number: string;
+  model: string;
+  condition: number;
+  due_date: string;
+  is_overdue: boolean;
+  days_until: number;
+}
+
+const SCHEDULE_GROUPS = [
+  { key: "overdue", label: "Overdue", Icon: AlertTriangle, heading: "text-red-300", match: (i: ScheduleItem) => i.is_overdue },
+  { key: "soon", label: "Due within 7 days", Icon: Clock, heading: "text-amber-300", match: (i: ScheduleItem) => !i.is_overdue && i.days_until <= 7 },
+  { key: "later", label: "Later", Icon: CheckCircle, heading: "text-steel-400", match: (i: ScheduleItem) => !i.is_overdue && i.days_until > 7 },
+];
+
+const dueTone = (i: ScheduleItem) => (i.is_overdue ? "text-red-300" : i.days_until <= 7 ? "text-amber-300" : "text-steel-400");
+
+function dueText(days: number): string {
+  if (days < 0) return `${Math.abs(days)} day${days === -1 ? "" : "s"} overdue`;
+  if (days === 0) return "Due today";
+  if (days === 1) return "Due tomorrow";
+  return `In ${days} days`;
+}
+
+function FirearmCell({ firearm }: { firearm?: { equipment_id: number; serial_number: string; model?: string } | null }) {
+  if (!firearm) return <span className="text-xs text-steel-500">Archived firearm</span>;
+  return (
+    <div>
+      <Link href={`/firearms/${firearm.equipment_id}`} className="font-mono text-xs font-semibold text-olive-100 hover:text-olive-300">
+        {firearm.serial_number}
+      </Link>
+      {firearm.model && <p className="text-[11px] text-steel-500">{firearm.model}</p>}
+    </div>
+  );
+}
+
+function ResultPill({ status }: { status: number }) {
+  const r = MAINTENANCE_RESULTS[status];
+  return <span className={cn("pill text-[10px]", r?.tone ?? "pill-muted")}>{r?.label ?? "—"}</span>;
+}
+
+/** The outside technician when one is named, otherwise the person who recorded it. */
+function doneBy(m: any): string {
+  if (m.repaired_by) return m.repaired_by;
+  return [m.technician?.rank, m.technician?.first_name, m.technician?.last_name].filter(Boolean).join(" ") || "—";
 }
