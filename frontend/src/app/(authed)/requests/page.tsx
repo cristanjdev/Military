@@ -4,7 +4,9 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AxiosError } from "axios";
-import { Check, ClipboardCheck, Loader2, Plus, X } from "lucide-react";
+import {
+  Check, CheckCircle2, ClipboardCheck, Clock, Loader2, PackagePlus, Plus, Wrench, X, XCircle, type LucideIcon,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { cn, fmtDate, fmtPeso, wholePesoInput } from "@/lib/utils";
@@ -35,9 +37,136 @@ interface LogisticsRequest {
 interface RepairItem { equipment_id: number; serial_number: string; model: string; result: string; last_job: string; date: string | null; cost: number }
 
 const TYPE_LABEL: Record<RequestType, string> = { new_firearm: "New Firearm", repair_budget: "Repair Budget" };
+const TYPE_ICON: Record<RequestType, LucideIcon> = { new_firearm: PackagePlus, repair_budget: Wrench };
+const STATUS_LABEL: Record<RequestStatus, string> = { pending: "Pending", approved: "Approved", rejected: "Rejected" };
 const STATUS_TONE: Record<RequestStatus, string> = { pending: "pill-warn", approved: "pill-ok", rejected: "pill-critical" };
 
+/** "November 14, 2026 at 9:15 AM" */
+const LONG_DATE = "MMMM d, yyyy 'at' h:mm a";
+
 const name = (p?: Person | null) => (p ? `${p.rank ? `${p.rank} ` : ""}${p.first_name} ${p.last_name}` : "—");
+
+/** One request: what is asked and why, its cost, and the decision (or the buttons to make it). */
+function RequestCard({
+  req: r,
+  canDecide,
+  onDecide,
+}: {
+  req: LogisticsRequest;
+  canDecide: boolean;
+  onDecide: (decision: "approved" | "rejected") => void;
+}) {
+  const TypeIcon = TYPE_ICON[r.type];
+  const items = r.items ?? [];
+  const perUnit = r.quantity ? Math.round(r.estimated_cost / r.quantity) : 0;
+
+  return (
+    <article className="glass rounded-xl overflow-hidden">
+      {/* Heading: what is asked, by whom, and the amount */}
+      <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+        <div className="min-w-0">
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-steel-400">
+            <TypeIcon className="h-3.5 w-3.5 shrink-0 text-olive-300" aria-hidden />
+            <span className="font-semibold uppercase tracking-wider text-olive-300">{TYPE_LABEL[r.type]}</span>
+            <span className="text-steel-600">·</span>
+            <span className="font-mono">Request #{r.request_id}</span>
+          </p>
+          <h3 className="mt-1.5 text-base font-semibold text-olive-50 break-words">{r.title}</h3>
+          <p className="mt-0.5 text-xs text-steel-400">
+            {r.requester ? <>Submitted by <span className="text-steel-200">{name(r.requester)}</span> on </> : "Submitted on "}
+            {fmtDate(r.created_at, LONG_DATE)}
+          </p>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 sm:block sm:shrink-0 sm:text-right">
+          <span className={cn("pill text-[10px] uppercase", STATUS_TONE[r.status])}>{STATUS_LABEL[r.status]}</span>
+          <div className="sm:mt-2">
+            <p className="text-lg font-bold leading-tight text-olive-50">{fmtPeso(r.estimated_cost)}</p>
+            <p className="text-[11px] text-steel-500">
+              {r.type === "new_firearm"
+                ? r.quantity
+                  ? `${r.quantity} unit${r.quantity === 1 ? "" : "s"} · about ${fmtPeso(perUnit)} each`
+                  : "Estimated cost"
+                : `Repair of ${items.length} firearm${items.length === 1 ? "" : "s"}`}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Justification and, for a repair budget, the firearms and their costs */}
+      {(r.details || items.length > 0) && (
+        <div className="grid gap-4 px-4 pb-4 sm:px-5 sm:pb-5 md:grid-cols-2">
+          {r.details && (
+            <div className={cn("min-w-0", items.length === 0 && "md:col-span-2")}>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-steel-500">Justification</p>
+              <p className="text-sm leading-relaxed text-steel-300 whitespace-pre-line break-words">{r.details}</p>
+            </div>
+          )}
+          {items.length > 0 && (
+            <div className={cn("min-w-0", !r.details && "md:col-span-2")}>
+              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-steel-500">Firearms to repair</p>
+              <table className="w-full text-xs">
+                <tbody className="divide-y divide-steel-800/70">
+                  {items.map((i) => (
+                    <tr key={i.equipment_id}>
+                      <td className="py-1.5 font-mono text-steel-200">{i.serial_number ?? `#${i.equipment_id}`}</td>
+                      <td className="py-1.5 text-right text-steel-300">{fmtPeso(i.cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t border-steel-700">
+                    <td className="pt-1.5 text-steel-400">Total</td>
+                    <td className="pt-1.5 text-right font-semibold text-olive-100">{fmtPeso(r.estimated_cost)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Decision */}
+      <footer className="flex flex-col gap-3 border-t border-steel-800/80 bg-steel-950/30 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        {r.status === "pending" ? (
+          <p className="flex items-center gap-2 text-xs text-amber-300/90">
+            <Clock className="h-4 w-4 shrink-0" aria-hidden />
+            Waiting for the Command Officer&apos;s decision
+          </p>
+        ) : (
+          <div className="min-w-0 text-xs">
+            <p className={cn("flex items-center gap-2", r.status === "approved" ? "text-emerald-300" : "text-red-300")}>
+              {r.status === "approved"
+                ? <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden />
+                : <XCircle className="h-4 w-4 shrink-0" aria-hidden />}
+              <span>
+                {STATUS_LABEL[r.status]}{r.decider ? <> by <span className="font-semibold">{name(r.decider)}</span></> : ""}
+                {r.decided_at && <span className="text-steel-400"> on {fmtDate(r.decided_at, LONG_DATE)}</span>}
+              </span>
+            </p>
+            {r.decision_note && (
+              <p className="mt-1 pl-6 text-steel-300 break-words">
+                <span className="text-steel-500">{r.status === "rejected" ? "Reason: " : "Note: "}</span>
+                {r.decision_note}
+              </p>
+            )}
+          </div>
+        )}
+
+        {canDecide && r.status === "pending" && (
+          <div className="flex gap-2 shrink-0">
+            <button onClick={() => onDecide("rejected")} className="btn-secondary text-xs">
+              <X className="h-3.5 w-3.5" /> Reject
+            </button>
+            <button onClick={() => onDecide("approved")} className="btn-primary text-xs">
+              <Check className="h-3.5 w-3.5" /> Approve
+            </button>
+          </div>
+        )}
+      </footer>
+    </article>
+  );
+}
 
 function errorText(e: unknown, fallback: string) {
   if (e instanceof AxiosError) {
@@ -61,9 +190,10 @@ export default function RequestsPage() {
   const [deciding, setDeciding] = useState<{ req: LogisticsRequest; decision: "approved" | "rejected" } | null>(null);
   const [note, setNote] = useState("");
 
+  // All requests at once, so each tab can show its count; the tabs filter on this page.
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ["logistics-requests", status],
-    queryFn: async () => (await api.get<{ data: LogisticsRequest[] }>("/requests", { params: { status: status || undefined, per_page: 50 } })).data,
+    queryKey: ["logistics-requests"],
+    queryFn: async () => (await api.get<{ data: LogisticsRequest[] }>("/requests", { params: { per_page: 200 } })).data,
   });
 
   const decide = useMutation({
@@ -77,7 +207,9 @@ export default function RequestsPage() {
     onError: (e) => toast.error(errorText(e, "Could not save the decision.")),
   });
 
-  const rows = data?.data ?? [];
+  const all = data?.data ?? [];
+  const rows = status ? all.filter((r) => r.status === status) : all;
+  const countOf = (s: "" | RequestStatus) => (s ? all.filter((r) => r.status === s).length : all.length);
 
   return (
     <div className="space-y-5">
@@ -85,7 +217,7 @@ export default function RequestsPage() {
         <div>
           <h1 className="text-2xl font-bold text-olive-50 flex items-center gap-2"><ClipboardCheck className="h-5 w-5 text-olive-300" /> Requests</h1>
           <p className="text-sm text-steel-400 max-w-2xl">
-            The S4 Officer requests new firearms, or the budget to repair the firearms that need it. The Command Officer approves or rejects.
+            Requests for new firearms and repair budgets from the S4 Officer, for the Command Officer&apos;s decision.
           </p>
         </div>
         {canCreate && (
@@ -93,70 +225,48 @@ export default function RequestsPage() {
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2" role="group" aria-label="Request status">
+      {/* Status tabs with counts */}
+      <div className="flex flex-wrap gap-1 border-b border-steel-800" role="tablist" aria-label="Request status">
         {(["", "pending", "approved", "rejected"] as const).map((s) => (
           <button
             key={s || "all"}
             type="button"
+            role="tab"
             onClick={() => setStatus(s)}
-            aria-pressed={status === s}
+            aria-selected={status === s}
             className={cn(
-              "rounded-md border px-3 py-1.5 text-xs font-medium capitalize transition",
-              status === s ? "border-olive-400/70 bg-olive-700/35 text-olive-50" : "border-steel-700/70 bg-steel-900/50 text-steel-300 hover:text-olive-100"
+              "-mb-px inline-flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition",
+              status === s ? "border-olive-400 text-olive-50" : "border-transparent text-steel-400 hover:text-steel-200"
             )}
           >
-            {s || "All"}
+            {s ? STATUS_LABEL[s] : "All"}
+            <span
+              className={cn(
+                "rounded-full px-1.5 py-px text-[10px] font-semibold",
+                s === "pending" && countOf(s) > 0 ? "bg-amber-500/20 text-amber-300" : "bg-steel-800 text-steel-400"
+              )}
+            >
+              {countOf(s)}
+            </span>
           </button>
         ))}
       </div>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {isError && <DataError onRetry={refetch} />}
         {isLoading && !isError && <p className="text-steel-400 text-sm">Loading…</p>}
         {!isLoading && !isError && rows.length === 0 && (
-          <div className="glass rounded-xl p-8 text-center text-sm text-steel-400">No requests yet.</div>
+          <div className="glass rounded-xl p-8 text-center text-sm text-steel-400">
+            {status ? `No ${STATUS_LABEL[status].toLowerCase()} requests.` : "No requests yet."}
+          </div>
         )}
         {rows.map((r) => (
-          <div key={r.request_id} className="glass rounded-xl p-4">
-            <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-xs text-steel-500">#{r.request_id}</span>
-                  <span className="pill pill-tactical text-[10px]">{TYPE_LABEL[r.type]}</span>
-                  <span className={cn("pill text-[10px] uppercase", STATUS_TONE[r.status])}>{r.status}</span>
-                </div>
-                <p className="mt-1.5 font-semibold text-olive-50">{r.title}</p>
-                {r.details && <p className="mt-1 text-sm text-steel-300 whitespace-pre-line">{r.details}</p>}
-                <p className="mt-1.5 text-xs text-steel-400">
-                  {r.quantity ? `${r.quantity} unit(s) · ` : ""}
-                  Estimated cost <span className="font-semibold text-olive-100">{fmtPeso(r.estimated_cost)}</span>
-                  {" · "}Requested by {name(r.requester)} on {fmtDate(r.created_at)}
-                </p>
-                {r.items && r.items.length > 0 && (
-                  <p className="mt-1 text-xs text-steel-400">
-                    Firearms: {r.items.map((i) => `${i.serial_number ?? `#${i.equipment_id}`} (${fmtPeso(i.cost)})`).join(", ")}
-                  </p>
-                )}
-                {r.status !== "pending" && (
-                  <p className="mt-1.5 text-xs text-steel-300">
-                    {r.status === "approved" ? "Approved" : "Rejected"} by {name(r.decider)} on {fmtDate(r.decided_at)}
-                    {r.decision_note ? ` — "${r.decision_note}"` : ""}
-                  </p>
-                )}
-              </div>
-
-              {canDecide && r.status === "pending" && (
-                <div className="flex gap-2 shrink-0">
-                  <button onClick={() => setDeciding({ req: r, decision: "rejected" })} className="btn-secondary text-xs">
-                    <X className="h-3.5 w-3.5" /> Reject
-                  </button>
-                  <button onClick={() => setDeciding({ req: r, decision: "approved" })} className="btn-primary text-xs">
-                    <Check className="h-3.5 w-3.5" /> Approve
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+          <RequestCard
+            key={r.request_id}
+            req={r}
+            canDecide={canDecide}
+            onDecide={(decision) => setDeciding({ req: r, decision })}
+          />
         ))}
       </div>
 
