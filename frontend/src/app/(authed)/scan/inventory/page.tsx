@@ -6,7 +6,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera,
   CameraOff,
-  ScanLine,
   QrCode,
   CheckCircle,
   XCircle,
@@ -177,7 +176,7 @@ export default function InventoryValidationPage() {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-olive-700/20">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <h1 className="text-xl sm:text-2xl font-bold tracking-wide text-olive-50">Batch Inventory QR Validation</h1>
@@ -215,24 +214,18 @@ export default function InventoryValidationPage() {
       <div className="grid lg:grid-cols-12 gap-5 items-stretch">
         {/* LEFT COLUMN: SCANNER VIEWPORT (7 cols) */}
         <div className="lg:col-span-7 flex flex-col">
-          <div className="glass rounded-xl p-4 sm:p-5 flex-1 flex flex-col justify-between lg:min-h-[540px]">
-            {/* Header Strip */}
-            <div className="flex items-center justify-between border-b border-olive-700/30 pb-3 mb-4">
-              <div className="flex items-center gap-2">
-                <Camera className="h-4 w-4 text-olive-300" />
-                <span className="text-xs font-semibold text-olive-100 uppercase tracking-wider">
-                  Continuous Optical Scanner
+          <div className="glass rounded-xl p-4 sm:p-5 flex-1 flex flex-col">
+            {/* Header */}
+            <div className="mb-3 flex min-h-10 items-center justify-between gap-2">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-steel-100">
+                <Camera className="h-4 w-4 text-olive-300" /> Camera
+              </h2>
+              {scanning && (
+                <span className="pill pill-tactical normal-case tracking-normal text-[11px] flex items-center gap-1.5 whitespace-nowrap">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                  Scanning
                 </span>
-              </div>
-
-              <div className="flex items-center gap-2">
-                {scanning && (
-                  <span className="pill pill-tactical text-[10px] uppercase tracking-wider flex items-center gap-1 whitespace-nowrap">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                    <span><span className="hidden sm:inline">Optical </span>Tracking Active</span>
-                  </span>
-                )}
-              </div>
+              )}
             </div>
 
             {/* LIVE CAMERA VIEWPORT */}
@@ -278,7 +271,7 @@ export default function InventoryValidationPage() {
               </div>
 
               {/* Hardware Controls */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs mt-auto">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs mt-auto">
                 {availableCameras.length > 1 && (
                   <div className="flex items-center gap-1.5">
                     <SlidersHorizontal className="h-3.5 w-3.5 text-steel-400" />
@@ -312,140 +305,112 @@ export default function InventoryValidationPage() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: VALIDATION RESULTS AUDIT FEED (5 cols) */}
+        {/* RIGHT COLUMN: what this batch has found so far (5 cols) */}
         <div className="lg:col-span-5 flex flex-col">
-          <div className="glass rounded-xl p-4 sm:p-5 flex-1 flex flex-col justify-between lg:min-h-[540px]">
-            {/* Header */}
-            <div className="flex items-center justify-between border-b border-olive-700/30 pb-3 mb-4">
-              <p className="section-title flex items-center gap-2 m-0">
-                <ClipboardCheck className="h-4 w-4 text-olive-300" /> Validation Results
-              </p>
-
-              <div className="flex items-center gap-2">
-                <span className="pill pill-tactical text-[10px] font-mono">
-                  {scannedItems.length} Verified
-                </span>
-                {totalScanned > 0 && (
-                  <button
-                    onClick={resetSession}
-                    className="btn-ghost text-xs p-1 text-steel-400 hover:text-olive-100 flex items-center gap-1"
-                    title="Clear current batch"
-                  >
-                    <RotateCcw className="h-3 w-3" /> Reset
-                  </button>
-                )}
-              </div>
+          <section aria-labelledby="batch-results-heading" className="glass rounded-xl p-4 sm:p-5 flex-1 flex flex-col">
+            <div className="mb-3 flex min-h-10 items-center justify-between gap-2">
+              <h2 id="batch-results-heading" className="flex items-center gap-2 text-sm font-semibold text-steel-100">
+                <ClipboardCheck className="h-4 w-4 text-olive-300" /> Batch results
+              </h2>
+              {totalScanned > 0 && (
+                <span className="text-xs text-steel-400">{totalScanned} scanned</span>
+              )}
             </div>
 
-            {/* Results List or Empty State */}
-            <div className="flex-1 flex flex-col justify-between">
+            {/* Running totals */}
+            <div className="grid grid-cols-3 gap-2">
+              <BatchStat label="Verified" value={scannedItems.length} tone="text-emerald-300" />
+              <BatchStat label="Not registered" value={notFound.length} tone={notFound.length > 0 ? "text-red-300" : "text-steel-300"} />
+              <BatchStat label="Match rate" value={totalScanned > 0 ? `${matchRate}%` : "—"} tone="text-olive-100" />
+            </div>
+
+            <div className="flex-1 py-4">
               {totalScanned === 0 ? (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-3">
-                  <div className="h-16 w-16 rounded-full bg-steel-900 border border-olive-700/40 flex items-center justify-center text-olive-400/60 shadow-inner">
-                    <ScanLine className="h-8 w-8 animate-pulse" />
+                <div className="flex h-full min-h-[200px] flex-col items-center justify-center text-center space-y-3 px-4">
+                  <div className="h-14 w-14 rounded-full bg-steel-900 border border-olive-700/40 flex items-center justify-center text-olive-400/70">
+                    <QrCode className="h-7 w-7" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-olive-100">Awaiting Inventory Scans</h3>
-                    <p className="text-xs text-steel-400 mt-1 max-w-xs">
-                      Continuously present firearm QR labels before the camera. Verified weapons and anomalies will appear in real time.
+                    <h3 className="text-sm font-semibold text-olive-100">No firearms scanned yet</h3>
+                    <p className="text-xs leading-relaxed text-steel-300 mt-1 max-w-xs">
+                      Hold each firearm&apos;s QR label up to the camera, one after another. Each one is checked against the
+                      armory records and listed here.
                     </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-steel-500 font-mono pt-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-olive-400 animate-ping" />
-                    BATCH AUDIT ARMED
                   </div>
                 </div>
               ) : (
-                <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+                <ul className="space-y-2">
                   <AnimatePresence initial={false}>
+                    {notFound.map((tag) => (
+                      <motion.li
+                        key={`not-found-${tag}`}
+                        initial={{ opacity: 0, y: -6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="flex items-center gap-3 rounded-lg bg-red-500/10 px-3 py-2.5"
+                      >
+                        <XCircle className="h-4 w-4 shrink-0 text-red-300" />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-red-200">Not in the armory records</p>
+                          <p className="truncate font-mono text-[11px] text-steel-400" title={tag}>{tag}</p>
+                        </div>
+                      </motion.li>
+                    ))}
+
                     {scannedItems.map((item) => (
-                      <motion.div
+                      <motion.li
                         key={item.equipment_id}
                         initial={{ opacity: 0, y: -6 }}
                         animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center justify-between p-3 rounded-lg border border-emerald-700/30 bg-emerald-950/20 text-xs"
+                        className="flex items-center gap-3 rounded-lg bg-steel-900/50 px-3 py-2.5"
                       >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <CheckCircle className="h-4 w-4 text-emerald-400 shrink-0" />
-                          <div className="truncate">
-                            <span className="font-mono font-bold text-olive-100">{item.serial_number}</span>
-                            <p className="text-[11px] text-steel-400 truncate">{item.model}</p>
-                          </div>
+                        <CheckCircle className="h-4 w-4 shrink-0 text-emerald-400" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate">
+                            <span className="font-mono text-sm text-steel-100">{item.serial_number}</span>
+                            <span className="ml-2 text-xs text-steel-400">{item.model}</span>
+                          </p>
+                          <p className="text-[11px] text-steel-500">Scanned {item.scanned_at}</p>
                         </div>
-
-                        <div className="flex items-center gap-1.5 shrink-0">
-                          <span className={`pill text-[10px] ${STATUSES[item.availability_status]?.tone}`}>
-                            {STATUSES[item.availability_status]?.label}
-                          </span>
-                          <span className="text-[10px] text-steel-500 font-mono hidden sm:inline">
-                            {item.scanned_at}
-                          </span>
-                        </div>
-                      </motion.div>
-                    ))}
-
-                    {notFound.map((tag, idx) => (
-                      <motion.div
-                        key={`not-found-${idx}`}
-                        initial={{ opacity: 0, y: -6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center justify-between p-3 rounded-lg border border-red-700/30 bg-red-950/20 text-xs"
-                      >
-                        <div className="flex items-center gap-2.5 min-w-0">
-                          <XCircle className="h-4 w-4 text-red-400 shrink-0" />
-                          <div className="truncate">
-                            <span className="font-bold text-red-200">Unregistered Firearm</span>
-                            <p className="text-[11px] text-steel-400 font-mono truncate">{tag}</p>
-                          </div>
-                        </div>
-                        <span className="pill pill-critical text-[10px]">ANOMALY</span>
-                      </motion.div>
+                        <span className={cn("pill shrink-0 normal-case tracking-normal", STATUSES[item.availability_status]?.tone ?? "pill-muted")}>
+                          {STATUSES[item.availability_status]?.label ?? "Unknown"}
+                        </span>
+                      </motion.li>
                     ))}
                   </AnimatePresence>
-                </div>
+                </ul>
               )}
-
-              {/* Bottom Summary Bar & Action Buttons */}
-              <div className="space-y-3 pt-3 border-t border-olive-700/20 mt-auto">
-                <div className="grid grid-cols-3 gap-2 p-2.5 rounded-lg bg-steel-900/60 border border-olive-700/30 text-center">
-                  <div>
-                    <p className="text-base font-bold text-emerald-400 font-mono">{scannedItems.length}</p>
-                    <p className="text-[10px] uppercase tracking-wider text-steel-400">Verified</p>
-                  </div>
-                  <div>
-                    <p className="text-base font-bold text-red-400 font-mono">{notFound.length}</p>
-                    <p className="text-[10px] uppercase tracking-wider text-steel-400">Discrepancy</p>
-                  </div>
-                  <div>
-                    <p className="text-base font-bold text-olive-200 font-mono">{matchRate}%</p>
-                    <p className="text-[10px] uppercase tracking-wider text-steel-400">Match Rate</p>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={exportAuditCsv}
-                    disabled={totalScanned === 0}
-                    className="btn-primary text-xs py-2 flex items-center justify-center gap-1.5"
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    <span>Export Audit CSV</span>
-                  </button>
-
-                  <button
-                    onClick={resetSession}
-                    disabled={totalScanned === 0}
-                    className="btn-secondary text-xs py-2 flex items-center justify-center gap-1.5"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    <span>Clear Batch</span>
-                  </button>
-                </div>
-              </div>
             </div>
-          </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={exportAuditCsv}
+                disabled={totalScanned === 0}
+                className="btn-primary min-h-10 text-xs"
+              >
+                <Download className="h-3.5 w-3.5" />
+                <span>Export CSV</span>
+              </button>
+              <button
+                onClick={resetSession}
+                disabled={totalScanned === 0}
+                className="btn-secondary min-h-10 text-xs"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                <span>Clear batch</span>
+              </button>
+            </div>
+          </section>
         </div>
       </div>
+    </div>
+  );
+}
+
+function BatchStat({ label, value, tone }: { label: string; value: number | string; tone: string }) {
+  return (
+    <div className="rounded-lg bg-steel-900/50 px-3 py-2.5 text-center">
+      <p className={cn("text-lg font-semibold leading-none", tone)}>{value}</p>
+      <p className="mt-1.5 truncate text-[11px] text-steel-400">{label}</p>
     </div>
   );
 }

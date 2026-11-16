@@ -95,6 +95,37 @@ export default function FirearmDetailPage() {
     }
   }
 
+  /** Saves the QR code as a PNG picture (opens anywhere, unlike the SVG it is drawn from). */
+  async function downloadQrImage() {
+    if (!qrSvg) return;
+    const svgUrl = URL.createObjectURL(new Blob([qrSvg], { type: "image/svg+xml" }));
+    try {
+      const img = new Image();
+      await new Promise((resolve, reject) => { img.onload = resolve; img.onerror = reject; img.src = svgUrl; });
+      const size = 1024;
+      const margin = 64; // white border so scanners find the code
+      const canvas = document.createElement("canvas");
+      canvas.width = canvas.height = size;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("no canvas");
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, size, size);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(img, margin, margin, size - margin * 2, size - margin * 2);
+      const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+      if (!png) throw new Error("no image");
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(png);
+      link.download = `QR-${data?.serial_number ?? "firearm"}.png`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    } catch {
+      toast.error("Couldn't save the QR image. Try Print Label instead.");
+    } finally {
+      URL.revokeObjectURL(svgUrl);
+    }
+  }
+
   function formatPersonnel(
     person?: { rank?: string | null; first_name?: string; last_name?: string } | null,
     fallbackId?: number | null
@@ -208,12 +239,6 @@ export default function FirearmDetailPage() {
                 <div className="flex items-center gap-2 mb-1 flex-wrap">
                   <span className="text-[10px] font-mono uppercase tracking-widest px-2 py-0.5 rounded bg-steel-900 border border-olive-500/30 text-olive-300 font-semibold">
                     {data.category?.category_name ?? "FIREARM"}
-                  </span>
-                  <span className={`pill ${CONDITIONS[data.condition_status]?.tone}`}>
-                    {CONDITIONS[data.condition_status]?.label}
-                  </span>
-                  <span className={`pill ${STATUSES[data.availability_status]?.tone}`}>
-                    {STATUSES[data.availability_status]?.label}
                   </span>
                 </div>
                 <h1 className="text-2xl sm:text-3xl font-extrabold text-olive-50 tracking-tight">
@@ -481,18 +506,14 @@ export default function FirearmDetailPage() {
           <div className="space-y-2 pt-2 border-t border-steel-800">
             <div className="grid grid-cols-2 gap-2">
               {qrSvg && (
-                <a
+                <button
+                  type="button"
+                  onClick={downloadQrImage}
                   className="btn-secondary text-xs py-2 flex items-center justify-center gap-1.5"
-                  download={`armory-${data.serial_number}.svg`}
-                  href={`data:image/svg+xml;base64,${
-                    typeof window === "undefined"
-                      ? ""
-                      : btoa(unescape(encodeURIComponent(qrSvg)))
-                  }`}
-                  title="Download vector SVG for armory engraving or sticker print"
+                  title="Save the QR code as a picture (PNG) for a sticker or to send"
                 >
-                  <Download className="h-3.5 w-3.5 text-steel-300" /> Download SVG
-                </a>
+                  <Download className="h-3.5 w-3.5 text-steel-300" /> Save QR Image
+                </button>
               )}
               <button
                 type="button"

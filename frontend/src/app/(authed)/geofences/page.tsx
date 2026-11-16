@@ -4,7 +4,8 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, MapPin, Loader2, Pencil, X } from "lucide-react";
+import { Plus, Minus, Trash2, MapPin, Loader2, Pencil, X, CheckCircle2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuthStore, hasRole } from "@/store/auth";
@@ -14,7 +15,7 @@ import { ZoneOccupancy } from "@/components/maps/zone-occupancy";
 
 const GeofencePicker = dynamic(
   () => import("@/components/maps/geofence-picker").then((m) => m.GeofencePicker),
-  { ssr: false, loading: () => <div className="h-[220px] rounded-md bg-steel-900/60 flex items-center justify-center text-steel-400 text-xs">Loading map…</div> }
+  { ssr: false, loading: () => <div className="h-[350px] lg:h-[442px] rounded-lg bg-steel-900/60 flex items-center justify-center text-steel-400 text-xs">Loading map…</div> }
 );
 
 interface GpsLocation {
@@ -52,10 +53,17 @@ export default function GeofencesPage() {
     description: "",
   });
 
+  // Coordinates are normally set from the map; typing them is the fallback for a GPS reading.
+  const [typeCoords, setTypeCoords] = useState(false);
+  const lat = parseFloat(form.latitude);
+  const lng = parseFloat(form.longitude);
+  const hasPoint = Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180;
+
   function resetForm() {
     setForm({ location_name: "", latitude: "", longitude: "", radius_meters: 500, is_armory: false, is_camp: false, description: "" });
     setEditing(null);
     setShowForm(false);
+    setTypeCoords(false);
   }
 
   function startEdit(loc: GpsLocation) {
@@ -116,13 +124,11 @@ export default function GeofencesPage() {
             <MapPin className="h-5 w-5 text-olive-300" /> Geofence Management
           </h1>
           <p className="text-sm text-steel-400">
-            Define the camp and the destination zones, and see which zone each firearm is in. An issued firearm travels
-            from the camp to its destination, stays 90 minutes, and comes straight back; leaving early, entering another
-            zone, or leaving the camp again after the return raises an alert with an alarm sound.
+            Manage camp and destination zones, track firearms, and monitor movement alerts.
           </p>
         </div>
         {canManage && (
-          <button onClick={() => { resetForm(); setShowForm((s) => !s); }} className="btn-primary">
+          <button onClick={() => { resetForm(); setShowForm((s) => !s); }} className="btn-primary shrink-0 whitespace-nowrap">
             <Plus className="h-4 w-4" /> New Geofence
           </button>
         )}
@@ -132,73 +138,185 @@ export default function GeofencesPage() {
 
       {showForm && canManage && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={resetForm}>
-          <div className="glass rounded-xl p-5 w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-3">
+          {/* Two columns on wide screens so everything fits without scrolling; a phone stacks them. */}
+          <div className="glass w-full max-w-5xl rounded-xl p-5 max-lg:max-h-[calc(100vh-2rem)] max-lg:overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
               <div className="flex justify-between items-center">
                 <p className="section-title">{editing ? `Edit: ${editing.location_name}` : "Create Geofence"}</p>
-                <button type="button" onClick={resetForm} className="btn-ghost text-xs"><X className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={resetForm} className="btn-ghost text-xs" aria-label="Close"><X className="h-3.5 w-3.5" /></button>
               </div>
 
-              {/* Zone Information */}
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-olive-300 mb-1.5">Zone Information</p>
-                <div>
-                  <label className="text-xs text-steel-400 mb-1 block">Zone Name</label>
-                  <input className="input-field w-full" required placeholder="e.g. Lumbia Firing Range"
-                         value={form.location_name} onChange={(e) => setForm({ ...form, location_name: e.target.value })} />
-                </div>
-                <div className="mt-2">
-                  <label className="text-xs text-steel-400 mb-1 block">Type</label>
-                  <div role="radiogroup" aria-label="Zone type" className="grid grid-cols-3 gap-2">
-                    {ZONE_TYPES.map((t) => (
-                      <TypeOption key={t.value} label={t.label} on={zoneType(form) === t.value}
-                                  onClick={() => setForm({ ...form, is_armory: t.value === "armory", is_camp: t.value === "camp" })} />
-                    ))}
+              <div className="mt-4 grid gap-5 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+                {/* Left: what the zone is and how big */}
+                <div className="space-y-3">
+                  <p className="text-[10px] uppercase tracking-widest text-olive-300">Zone Information</p>
+                  <div>
+                    <label htmlFor="zone-name" className="text-xs text-steel-400 mb-1 block">Zone Name</label>
+                    <input id="zone-name" className="input-field w-full" required placeholder="e.g. Lumbia Firing Range"
+                           value={form.location_name} onChange={(e) => setForm({ ...form, location_name: e.target.value })} />
                   </div>
-                  <p className="mt-1.5 text-[11px] text-steel-500">
-                    {ZONE_TYPES.find((t) => t.value === zoneType(form))?.hint}
-                  </p>
-                </div>
-                <div className="mt-2">
-                  <label className="text-xs text-steel-400 mb-1 block">Description</label>
-                  <input className="input-field w-full" placeholder="Optional description"
-                         value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-                </div>
-              </div>
+                  <div>
+                    <label className="text-xs text-steel-400 mb-1 block">Type</label>
+                    <div role="radiogroup" aria-label="Zone type" className="grid grid-cols-3 gap-2">
+                      {ZONE_TYPES.map((t) => (
+                        <TypeOption key={t.value} label={t.label} on={zoneType(form) === t.value}
+                                    onClick={() => setForm({ ...form, is_armory: t.value === "armory", is_camp: t.value === "camp" })} />
+                      ))}
+                    </div>
+                    <p className="mt-1.5 text-[11px] text-steel-500">
+                      {ZONE_TYPES.find((t) => t.value === zoneType(form))?.hint}
+                    </p>
+                  </div>
+                  <div>
+                    <label htmlFor="zone-description" className="text-xs text-steel-400 mb-1 block">Description</label>
+                    <input id="zone-description" className="input-field w-full" placeholder="Optional description"
+                           value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                  </div>
 
-              {/* Map + Coordinates side by side */}
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-olive-300 mb-1.5">Location & Coordinates</p>
-                <div className="grid md:grid-cols-[1fr_200px] gap-3">
+                  <div>
+                    <label className="text-xs text-steel-400 mb-1 block">Zone size</label>
+                    {/* Common sizes first; the exact radius below for anything else */}
+                    <div role="radiogroup" aria-label="Zone size" className="grid grid-cols-4 gap-2">
+                      {SIZE_PRESETS.map((s) => {
+                        const on = form.radius_meters === s.radius;
+                        return (
+                          <button
+                            key={s.radius}
+                            type="button"
+                            role="radio"
+                            aria-checked={on}
+                            onClick={() => setForm({ ...form, radius_meters: s.radius })}
+                            className={cn(
+                              "rounded-md border px-1 py-1.5 text-center transition-colors",
+                              on
+                                ? "border-olive-500 bg-olive-600/30 text-olive-100"
+                                : "border-steel-700/40 bg-steel-900/60 text-steel-300 hover:border-steel-600"
+                            )}
+                          >
+                            <span className="block text-xs font-medium">{s.label}</span>
+                            <span className={cn("block text-[10px]", on ? "text-olive-200/80" : "text-steel-500")}>{acrossText(s.radius)}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-3">
+                      <div className="flex shrink-0 items-center rounded-md border border-steel-700/40 bg-steel-900/60">
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, radius_meters: Math.max(10, form.radius_meters - radiusStep(form.radius_meters - 1)) })}
+                          disabled={form.radius_meters <= 10}
+                          aria-label="Smaller"
+                          className="flex h-9 w-9 items-center justify-center text-steel-300 hover:text-olive-200 disabled:opacity-30"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <input
+                          type="number"
+                          min={10}
+                          required
+                          aria-label="Radius in metres"
+                          value={form.radius_meters}
+                          onChange={(e) => setForm({ ...form, radius_meters: Number(e.target.value) })}
+                          className="h-9 w-16 border-x border-steel-700/40 bg-transparent text-center text-sm text-olive-50 outline-none [appearance:textfield] focus:bg-steel-800/60 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setForm({ ...form, radius_meters: form.radius_meters + radiusStep(form.radius_meters) })}
+                          aria-label="Bigger"
+                          className="flex h-9 w-9 items-center justify-center text-steel-300 hover:text-olive-200"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                      <p className="text-[11px] leading-snug text-steel-500">
+                        metres from the centre. Make the circle on the map cover the whole place.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div>
+                    <div
+                      className={cn(
+                        "flex items-center gap-2.5 rounded-md border px-3 py-2 text-xs",
+                        hasPoint ? "border-steel-700/40 bg-steel-900/60" : "border-amber-500/40 bg-amber-500/10"
+                      )}
+                    >
+                      {hasPoint
+                        ? <CheckCircle2 className="h-4 w-4 shrink-0 text-olive-400" />
+                        : <MapPin className="h-4 w-4 shrink-0 text-amber-300" />}
+                      <span className="min-w-0 flex-1">
+                        {hasPoint ? (
+                          <>
+                            <span className="block text-steel-200">Location set</span>
+                            <span className="block font-mono text-[11px] text-steel-400">{lat.toFixed(6)}, {lng.toFixed(6)}</span>
+                          </>
+                        ) : (
+                          <>
+                            <span className="block text-amber-200">Location not set yet</span>
+                            <span className="block text-[11px] text-steel-400">Search for the place or click the map.</span>
+                          </>
+                        )}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setTypeCoords((v) => !v)}
+                        aria-expanded={typeCoords}
+                        className="shrink-0 rounded px-1.5 py-1 text-[11px] text-olive-300 hover:bg-steel-800 hover:text-olive-200"
+                      >
+                        {typeCoords ? "Hide coordinates" : "Enter coordinates"}
+                      </button>
+                    </div>
+
+                    {typeCoords && (
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div>
+                          <label htmlFor="zone-lat" className="text-xs text-steel-400 mb-1 block">Latitude</label>
+                          <input id="zone-lat" className="input-field w-full" type="number" step="any" min={-90} max={90} placeholder="8.4542"
+                                 value={form.latitude} onChange={(e) => setForm({ ...form, latitude: e.target.value })} />
+                        </div>
+                        <div>
+                          <label htmlFor="zone-lng" className="text-xs text-steel-400 mb-1 block">Longitude</label>
+                          <input id="zone-lng" className="input-field w-full" type="number" step="any" min={-180} max={180} placeholder="124.6319"
+                                 value={form.longitude} onChange={(e) => setForm({ ...form, longitude: e.target.value })} />
+                        </div>
+                        <p className="col-span-2 text-[11px] text-steel-500">
+                          For a reading from a GPS device or Google Maps (decimal degrees).
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right: where the zone is, found on the map rather than typed in */}
+                <div className="space-y-3">
+                  <p className="text-[10px] uppercase tracking-widest text-olive-300">Location</p>
                   <GeofencePicker
-                    latitude={parseFloat(form.latitude) || 0}
-                    longitude={parseFloat(form.longitude) || 0}
+                    latitude={hasPoint ? lat : null}
+                    longitude={hasPoint ? lng : null}
                     radius={form.radius_meters}
-                    onChange={(lat, lng) => setForm({ ...form, latitude: lat.toFixed(7), longitude: lng.toFixed(7) })}
+                    onChange={(la, ln) => setForm((f) => ({ ...f, latitude: la.toFixed(7), longitude: ln.toFixed(7) }))}
+                    mapClassName="h-[300px] lg:h-[416px]"
+                    otherZones={(locations ?? [])
+                      .filter((l) => l.location_id !== editing?.location_id)
+                      .map((l) => ({
+                        id: l.location_id,
+                        name: l.location_name,
+                        lat: Number(l.center_latitude),
+                        lng: Number(l.center_longitude),
+                        radius: l.radius_meters,
+                      }))}
                   />
-                  <div className="space-y-2">
-                    <div>
-                      <label className="text-xs text-steel-400 mb-1 block">Latitude</label>
-                      <input className="input-field w-full" required type="number" step="any" placeholder="8.4542"
-                             value={form.latitude} onChange={(e) => setForm({ ...form, latitude: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="text-xs text-steel-400 mb-1 block">Longitude</label>
-                      <input className="input-field w-full" required type="number" step="any" placeholder="124.6319"
-                             value={form.longitude} onChange={(e) => setForm({ ...form, longitude: e.target.value })} />
-                    </div>
-                    <div>
-                      <label className="text-xs text-steel-400 mb-1 block">Radius (m)</label>
-                      <input className="input-field w-full" required type="number" min={10} placeholder="500"
-                             value={form.radius_meters} onChange={(e) => setForm({ ...form, radius_meters: Number(e.target.value) })} />
-                    </div>
-                  </div>
                 </div>
               </div>
 
-              <div className="flex gap-2 justify-end pt-3">
+              <div className="mt-5 flex gap-2 justify-end">
                 <button type="button" onClick={resetForm} className="btn-secondary text-xs">Cancel</button>
-                <button disabled={save.isPending} className="btn-primary text-xs">
+                <button
+                  disabled={save.isPending || !hasPoint}
+                  title={hasPoint ? undefined : "Set the zone's location first"}
+                  className="btn-primary text-xs disabled:cursor-not-allowed disabled:opacity-50"
+                >
                   {save.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
                   {editing ? "Update" : "Create"} Geofence
                 </button>
@@ -284,6 +402,25 @@ const ZONE_TYPES: { value: ZoneType; label: string; hint: string }[] = [
   { value: "camp", label: "Camp", hint: "Part of the camp. Issued firearms leave from and return to it; it is not offered as a destination." },
   { value: "armory", label: "Armory", hint: "Where firearms are stored. It counts as part of the camp and is not offered as a destination." },
 ];
+
+/** Radii for the usual kinds of place. */
+const SIZE_PRESETS = [
+  { label: "Building", radius: 50 },
+  { label: "Compound", radius: 150 },
+  { label: "Camp", radius: 500 },
+  { label: "Wide area", radius: 1000 },
+];
+
+/** "1 km across" for a 500 m radius. */
+function acrossText(radius: number) {
+  const across = radius * 2;
+  return `${across >= 1000 ? `${Number((across / 1000).toFixed(1))} km` : `${across} m`} across`;
+}
+
+/** How much − and + change the radius: finer steps for small zones. */
+function radiusStep(radius: number) {
+  return radius < 100 ? 10 : radius < 1000 ? 50 : 100;
+}
 
 function zoneType(z: { is_armory: boolean; is_camp: boolean }): ZoneType {
   return z.is_armory ? "armory" : z.is_camp ? "camp" : "destination";

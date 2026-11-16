@@ -3,9 +3,9 @@
 import { Fragment, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { fmtDate } from "@/lib/utils";
+import { CONDITIONS, STATUSES, fmtDate } from "@/lib/utils";
 import { humanizeAuditAction } from "@/lib/audit";
-import { Lock, ChevronLeft, ChevronRight, ChevronDown, ShieldCheck, ShieldX, Loader2 } from "lucide-react";
+import { Lock, ChevronLeft, ChevronRight, ChevronDown, ShieldCheck, ShieldX, Loader2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { DataError } from "@/components/ui/data-error";
 
@@ -23,53 +23,150 @@ interface VerifyResult {
 
 type Change = { from: unknown; to: unknown };
 
-function show(value: unknown): string {
+/** Plain names for the fields the backend records (anything else is spelled out from its key). */
+const FIELD_LABELS: Record<string, string> = {
+  required_clearance: "Clearance needed",
+  user_clearance: "Account's clearance",
+  required_roles: "Allowed roles",
+  transaction_id: "Issuance",
+  recipient_id: "Issued to (user ID)",
+  destination_location_id: "Destination (geofence ID)",
+  target_user_id: "User ID",
+  request_id: "Request",
+  repair_id: "Repair",
+  maintenance_id: "Maintenance record",
+  location_id: "Geofence ID",
+  device_id: "Tracker",
+  source: "Verified with",
+  result_status: "Result",
+  from: "Before",
+  to: "After",
+  serial_number: "Serial number",
+  condition_status: "Condition",
+  availability_status: "Status",
+  acquisition_cost: "Acquisition cost",
+  estimated_cost: "Estimated cost",
+  location_name: "Name",
+  center_latitude: "Latitude",
+  center_longitude: "Longitude",
+  radius_meters: "Radius (m)",
+  security_level: "Security level",
+  is_armory: "Armory",
+  is_camp: "Camp",
+  user_id: "User ID",
+  first_name: "First name",
+  last_name: "Last name",
+};
+
+/** Record numbers shown as "#12". */
+const NUMBERED = new Set(["transaction_id", "request_id", "repair_id", "maintenance_id"]);
+
+function fieldLabel(key: string) {
+  return FIELD_LABELS[key] ?? key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+function fieldValue(key: string, value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
+  if (key === "condition_status" && typeof value === "number") return CONDITIONS[value]?.label ?? String(value);
+  if (key === "availability_status" && typeof value === "number") return STATUSES[value]?.label ?? String(value);
+  if (key.endsWith("clearance")) return `Level ${value}`;
+  if (NUMBERED.has(key)) return `#${value}`;
+  if (key.endsWith("cost") && !Number.isNaN(Number(value))) return `₱${Number(value).toLocaleString()}`;
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (typeof value === "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return value.map((v) => fieldValue("", v)).join(", ");
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) return fmtDate(value, "MMMM d, yyyy 'at' h:mm a");
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, unknown>).map(([k, v]) => `${fieldLabel(k)}: ${fieldValue(k, v)}`).join(" · ");
+  }
   return String(value);
 }
 
-/** What an entry recorded beyond its one-line description: edits field by field, or the record removed/added. */
+/** One sentence for the entries whose details are easier read as words. */
+function auditSummary(m: Record<string, any>): { text: string; keys: string[] } | null {
+  if (m.required_clearance != null) {
+    return {
+      text: `Blocked because this needs clearance level ${m.required_clearance} and the account has level ${m.user_clearance ?? "unknown"}.`,
+      keys: ["required_clearance", "user_clearance"],
+    };
+  }
+  if (Array.isArray(m.required_roles)) {
+    return { text: `Blocked because only ${m.required_roles.join(", ")} can do this.`, keys: ["required_roles"] };
+  }
+  return null;
+}
+
+/** What an entry recorded beyond its one-line description, in words and named fields (never raw data). */
 function AuditDetails({ metadata }: { metadata: Record<string, any> }) {
   const changes = metadata.changes as Record<string, Change> | undefined;
   const snapshot = (metadata.deleted ?? metadata.created) as Record<string, unknown> | undefined;
-  const isChangeMap = changes && Object.values(changes).every((c) => c && typeof c === "object" && "from" in c);
+  const isChangeMap = !!changes && Object.values(changes).every((c) => c && typeof c === "object" && "from" in c);
+  const summary = auditSummary(metadata);
+  const hidden = new Set(["changes", "deleted", "created", ...(summary?.keys ?? [])]);
+  const facts = Object.entries(metadata).filter(([k, v]) => !hidden.has(k) && v !== null && v !== undefined && v !== "");
 
   return (
-    <div className="space-y-2 text-xs">
-      {isChangeMap && Object.keys(changes!).length > 0 && (
-        <div>
-          <p className="text-[10px] uppercase tracking-widest text-olive-300 mb-1">Changed</p>
-          <table className="text-xs">
-            <tbody>
+    <div className="max-w-4xl space-y-4">
+      {summary && (
+        <p className="flex items-start gap-2 text-sm text-steel-100">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-amber-300" /> {summary.text}
+        </p>
+      )}
+
+      {isChangeMap && (
+        <DetailSection title="What changed">
+          {Object.keys(changes!).length === 0 ? (
+            <p className="text-xs text-steel-400">Saved with no field changes.</p>
+          ) : (
+            <dl className="space-y-1.5">
               {Object.entries(changes!).map(([field, c]) => (
-                <tr key={field}>
-                  <td className="pr-4 py-0.5 text-steel-400 whitespace-nowrap">{field.replace(/_/g, " ")}</td>
-                  <td className="pr-2 py-0.5 text-red-300/90 line-through decoration-red-500/50">{show(c.from)}</td>
-                  <td className="pr-2 py-0.5 text-steel-500">→</td>
-                  <td className="py-0.5 text-emerald-300">{show(c.to)}</td>
-                </tr>
+                <div key={field} className="grid grid-cols-[10rem_minmax(0,1fr)] items-baseline gap-3">
+                  <dt className="text-xs text-steel-400">{fieldLabel(field)}</dt>
+                  <dd className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                    <span className="text-steel-400 line-through decoration-steel-500">{fieldValue(field, c.from)}</span>
+                    <span className="text-steel-500" aria-label="changed to">→</span>
+                    <span className="text-steel-100">{fieldValue(field, c.to)}</span>
+                  </dd>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
+            </dl>
+          )}
+        </DetailSection>
       )}
-      {isChangeMap && Object.keys(changes!).length === 0 && <p className="text-steel-500">Saved with no field changes.</p>}
+
       {snapshot && (
-        <div>
-          <p className="text-[10px] uppercase tracking-widest text-olive-300 mb-1">{metadata.deleted ? "Record removed" : "Record added"}</p>
-          <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-            {Object.entries(snapshot).map(([k, v]) => (
-              <span key={k}><span className="text-steel-400">{k.replace(/_/g, " ")}:</span> <span className="text-steel-200">{show(v)}</span></span>
-            ))}
-          </div>
-        </div>
+        <DetailSection title={metadata.deleted ? "Record removed" : "Record added"}>
+          <FactGrid entries={Object.entries(snapshot)} />
+        </DetailSection>
       )}
-      {!isChangeMap && !snapshot && (
-        <pre className="whitespace-pre-wrap break-all text-[11px] text-steel-400">{JSON.stringify(metadata, null, 2)}</pre>
+
+      {facts.length > 0 && (
+        isChangeMap || snapshot
+          ? <DetailSection title="Details"><FactGrid entries={facts} /></DetailSection>
+          : <FactGrid entries={facts} />
       )}
     </div>
+  );
+}
+
+function DetailSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h4 className="mb-2 text-xs font-semibold text-steel-300">{title}</h4>
+      {children}
+    </section>
+  );
+}
+
+function FactGrid({ entries }: { entries: [string, unknown][] }) {
+  return (
+    <dl className="grid gap-x-8 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-3">
+      {entries.map(([k, v]) => (
+        <div key={k} className="min-w-0">
+          <dt className="text-[11px] text-steel-400">{fieldLabel(k)}</dt>
+          <dd className="break-words text-sm text-steel-100">{fieldValue(k, v)}</dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -203,7 +300,7 @@ export default function AuditPage() {
                     </tr>
                     {open && (
                       <tr className="bg-steel-900/50">
-                        <td colSpan={8} className="px-4 py-3">
+                        <td colSpan={8} className="px-4 py-4">
                           <AuditDetails metadata={row.metadata} />
                         </td>
                       </tr>

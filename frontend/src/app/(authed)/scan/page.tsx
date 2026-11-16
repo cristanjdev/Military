@@ -7,10 +7,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Camera,
   CameraOff,
-  ScanLine,
   QrCode,
   ShieldCheck,
-  AlertCircle,
   ClipboardCheck,
   UploadCloud,
   Volume2,
@@ -20,12 +18,8 @@ import {
   RotateCcw,
   ExternalLink,
   Wrench,
-  MapPin,
-  User,
-  Clock,
   ArrowRight,
   Search,
-  CheckCircle2,
   RefreshCw,
   SlidersHorizontal,
   History,
@@ -37,7 +31,7 @@ import { useAuthStore, hasRole } from "@/store/auth";
 import { useQrCamera, type ScanFeedback } from "@/lib/use-qr-camera";
 import { ScanDetectionOverlay } from "@/components/scan/scan-detection-overlay";
 import { decodeQrFromFile } from "@/lib/qr-decoder";
-import { CONDITIONS, STATUSES, cn } from "@/lib/utils";
+import { CONDITIONS, STATUSES, cn, fmtDate, fmtRelative } from "@/lib/utils";
 
 interface ActiveTransaction {
   transaction_id: number;
@@ -209,7 +203,7 @@ export default function ScanPage() {
     <>
       <div className="space-y-6">
         {/* Page Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-2 border-b border-olive-700/20">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
             <h1 className="text-xl sm:text-2xl font-bold tracking-wide text-olive-50">Quick Response (QR) Scanner</h1>
@@ -246,10 +240,10 @@ export default function ScanPage() {
 
       <div className="grid lg:grid-cols-12 gap-5 items-stretch">
         {/* LEFT COLUMN: SCANNER VIEWPORT & INPUT MODES (7 cols) */}
-        <div className="lg:col-span-7 flex flex-col">
-          <div className="glass rounded-xl p-4 sm:p-5 flex-1 flex flex-col justify-between lg:min-h-[540px]">
+        <div className="lg:col-span-7 min-w-0">
+          <div className="glass rounded-xl p-4 sm:p-5 lg:h-full">
             {/* Mode Switcher Tabs */}
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-b border-olive-700/30 pb-3 mb-4">
+            <div className="flex min-h-10 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between mb-4">
               <div className="grid grid-cols-2 gap-1.5 sm:flex sm:items-center bg-steel-900/90 p-1 rounded-lg border border-olive-700/30">
                 <button
                   onClick={() => setMode("camera")}
@@ -297,7 +291,7 @@ export default function ScanPage() {
 
             {/* TAB 1: LIVE CAMERA VIEWPORT */}
             {/* Stays mounted (hidden) on the upload tab so a camera start in flight is never torn out of the DOM. */}
-            <div className={cn("flex-1 flex-col justify-between space-y-3", mode === "camera" ? "flex" : "hidden")}>
+            <div className={cn("flex-col space-y-3", mode === "camera" ? "flex" : "hidden")}>
               <div className="relative aspect-[4/3] w-full max-h-[420px] mx-auto overflow-hidden rounded-lg bg-black border border-olive-700/50 shadow-inner flex items-center justify-center">
                 {/* HTML5 QR Code Mount Target */}
                 <div id="qr-camera-viewport" ref={containerRef} className="absolute inset-0 w-full h-full" />
@@ -342,7 +336,7 @@ export default function ScanPage() {
               </div>
 
               {/* Camera Hardware Controls */}
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs mt-auto">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs">
                 {availableCameras.length > 1 && (
                   <div className="flex items-center gap-1.5 min-w-0 flex-1 sm:flex-none">
                     <SlidersHorizontal className="h-3.5 w-3.5 text-steel-400" />
@@ -376,10 +370,10 @@ export default function ScanPage() {
 
             {/* TAB 2: UPLOAD QR IMAGE FILE */}
             {mode === "file" && (
-              <div className="flex-1 flex flex-col justify-between py-1 space-y-3">
+              <div className="flex flex-col py-1 space-y-3">
                 <div
                   onClick={() => fileInputRef.current?.click()}
-                  className="border-2 border-dashed border-olive-700/50 hover:border-olive-400/80 rounded-xl p-8 text-center cursor-pointer bg-steel-900/40 hover:bg-steel-900/70 transition-all flex-1 flex flex-col items-center justify-center space-y-3 min-h-[380px]"
+                  className="border-2 border-dashed border-olive-700/50 hover:border-olive-400/80 rounded-xl p-8 text-center cursor-pointer bg-steel-900/40 hover:bg-steel-900/70 transition-all flex flex-col items-center justify-center space-y-3 min-h-[380px]"
                 >
                   <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileUpload} className="hidden" />
                   <div className="h-14 w-14 rounded-full bg-tactical-surface border border-olive-500/40 flex items-center justify-center text-olive-300 shadow-inner">
@@ -394,7 +388,7 @@ export default function ScanPage() {
                   </button>
                 </div>
 
-                <div className="p-2.5 rounded-lg bg-steel-950/60 border border-olive-700/25 text-xs text-steel-400 flex items-center gap-2.5 mt-auto">
+                <div className="p-2.5 rounded-lg bg-steel-950/60 border border-olive-700/25 text-xs text-steel-400 flex items-center gap-2.5">
                   <ShieldCheck className="h-4 w-4 text-olive-400 shrink-0" />
                   <p className="text-[11px] text-steel-400 leading-tight">
                     Browser-integrated image decoding extracts Quick Response payloads directly from photos for armory verification.
@@ -405,22 +399,20 @@ export default function ScanPage() {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: FIREARM DOSSIER & LOOKUP RESULT (5 cols) */}
-        <div className="lg:col-span-5 flex flex-col">
-          <div className="glass rounded-xl p-4 sm:p-5 flex-1 flex flex-col justify-between lg:min-h-[540px]">
-            <div className="flex items-center justify-between border-b border-olive-700/30 pb-3 mb-4">
-              <p className="section-title flex items-center gap-2 m-0">
-                <ShieldCheck className="h-4 w-4 text-olive-300" /> Firearm Dossier
-              </p>
+        {/* RIGHT COLUMN: what was scanned or uploaded (5 cols) */}
+        {/* Grows to fit the result (never scrolls); the row takes the taller of the two columns. */}
+        <div className="lg:col-span-5 min-w-0 flex">
+          <section aria-labelledby="scan-result-heading" className="glass flex flex-1 flex-col rounded-xl p-4 sm:p-5">
+            <div className="mb-3 flex min-h-10 shrink-0 flex-wrap items-center justify-between gap-2">
+              <h2 id="scan-result-heading" className="flex items-center gap-2 text-sm font-semibold text-steel-100">
+                <ShieldCheck className="h-4 w-4 text-olive-300" /> Scan result
+              </h2>
               {hit && (
                 <button
-                  onClick={() => {
-                    setHit(null);
-                  }}
-                  className="btn-ghost text-xs p-1 text-steel-400 hover:text-olive-100 flex items-center gap-1"
-                  title="Clear result"
+                  onClick={() => setHit(null)}
+                  className="btn-ghost min-h-10 px-2 text-xs text-steel-300"
                 >
-                  <RotateCcw className="h-3 w-3" /> Reset
+                  <RotateCcw className="h-3.5 w-3.5" /> Scan another
                 </button>
               )}
             </div>
@@ -432,140 +424,122 @@ export default function ScanPage() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  className="flex-1 flex flex-col justify-between space-y-4"
+                  className="flex flex-1 flex-col gap-4"
                 >
-                  {/* Firearm Header Details */}
-                  <div className="space-y-3">
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h2 className="text-xl font-bold text-olive-50 leading-tight">{hit.model}</h2>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="font-mono text-xs text-olive-200 bg-steel-800 px-2 py-0.5 rounded border border-olive-700/40">
-                            SN: {hit.serial_number}
-                          </span>
-                          <button
-                            onClick={() => copySerial(hit.serial_number)}
-                            className="text-steel-400 hover:text-olive-100 p-1"
-                            title="Copy Serial Number"
-                          >
-                            {copiedSerial ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                          </button>
-                        </div>
+                  <div className="flex-1 space-y-4">
+                    {/* 1. Which firearm, and where it stands */}
+                    {/* Name on the left; status and serial stacked on the right */}
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <h3 className="break-words text-xl font-semibold leading-tight tracking-tight text-olive-50">{hit.model}</h3>
+                        <p className="mt-0.5 text-xs text-steel-400">
+                          {[hit.manufacturer, hit.category?.category_name].filter(Boolean).join(" · ") || "Firearm"}
+                        </p>
                       </div>
-
-                      <div className="flex flex-col items-end gap-1.5">
-                        <span className={`pill ${STATUSES[hit.availability_status]?.tone}`}>
-                          {STATUSES[hit.availability_status]?.label}
+                      <div className="flex shrink-0 flex-col items-end gap-1.5">
+                        <span className={cn("pill normal-case tracking-normal", STATUSES[hit.availability_status]?.tone ?? "pill-muted")}>
+                          {STATUSES[hit.availability_status]?.label ?? "Unknown"}
                         </span>
-                        <span className={`pill ${CONDITIONS[hit.condition_status]?.tone}`}>
-                          {CONDITIONS[hit.condition_status]?.label}
-                        </span>
+                        <button
+                          onClick={() => copySerial(hit.serial_number)}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-steel-900/70 px-2 py-0.5 transition-colors hover:bg-steel-800"
+                          aria-label={copiedSerial ? "Serial number copied" : `Copy serial number ${hit.serial_number}`}
+                          title="Copy serial number"
+                        >
+                          <span className="text-[10px] text-steel-400">SN</span>
+                          <span className="font-mono text-xs text-steel-100">{hit.serial_number}</span>
+                          {copiedSerial ? <Check className="h-3 w-3 shrink-0 text-emerald-300" /> : <Copy className="h-3 w-3 shrink-0 text-steel-400" />}
+                        </button>
                       </div>
                     </div>
 
-                    {/* Custody Alert Banner */}
-                    {isCheckedOut && activeTx ? (
-                      <div className="rounded-lg p-3 border border-amber-600/30 bg-amber-950/20 text-xs space-y-1.5">
-                        <div className="flex items-center gap-1.5 text-amber-300 font-semibold">
-                          <User className="h-3.5 w-3.5" />
-                          <span>Currently Issued To:</span>
-                        </div>
-                        <p className="text-sm font-bold text-amber-100 pl-5">
-                          {activeTx.user?.rank ? `${activeTx.user.rank} ` : ""}
-                          {activeTx.user?.first_name} {activeTx.user?.last_name}
-                        </p>
-                        <div className="flex items-center gap-3 pl-5 text-[11px] text-steel-400">
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" /> Due: {new Date(activeTx.expected_return_at).toLocaleDateString()}
-                          </span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="rounded-lg p-2.5 border border-emerald-700/30 bg-emerald-950/20 text-xs flex items-center gap-2 text-emerald-300">
-                        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-400" />
-                        <span>Secured in Armory · Available for Assignment</span>
-                      </div>
+                    <ScanNotice firearm={hit} />
+
+                    {/* 2. Who has it */}
+                    {isCheckedOut && (
+                      <ScanSection
+                        title="Custody"
+                        aside={activeTx?.expected_return_at && (
+                          hit.availability_status === 4
+                            ? <span className="font-medium text-red-300">Overdue · {fmtRelative(activeTx.expected_return_at)}</span>
+                            : <span className="text-steel-400">Due {fmtRelative(activeTx.expected_return_at)}</span>
+                        )}
+                      >
+                        <ScanRow label="Issued to">{holderName(activeTx) ?? "Not recorded"}</ScanRow>
+                        {activeTx?.checkout_at && <ScanRow label="Issued on">{fmtDate(activeTx.checkout_at, LONG_DATE)}</ScanRow>}
+                        <ScanRow label="Return due">
+                          {activeTx?.expected_return_at ? (
+                            <span className={hit.availability_status === 4 ? "text-red-200" : undefined}>
+                              {fmtDate(activeTx.expected_return_at, LONG_DATE)}
+                            </span>
+                          ) : "Not recorded"}
+                        </ScanRow>
+                      </ScanSection>
                     )}
 
-                    {/* Specifications Grid */}
-                    <div className="grid grid-cols-2 gap-2.5 p-3 rounded-lg bg-steel-900/60 border border-olive-700/30 text-xs">
-                      <div>
-                        <dt className="text-[10px] uppercase tracking-wider text-olive-300">Manufacturer</dt>
-                        <dd className="font-semibold text-steel-200 mt-0.5">{hit.manufacturer}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] uppercase tracking-wider text-olive-300">Caliber</dt>
-                        <dd className="font-semibold text-steel-200 mt-0.5">{hit.caliber || "N/A"}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] uppercase tracking-wider text-olive-300">Category</dt>
-                        <dd className="font-semibold text-steel-200 mt-0.5">{hit.category?.category_name || "Standard Issue"}</dd>
-                      </div>
-                      <div>
-                        <dt className="text-[10px] uppercase tracking-wider text-olive-300">Armory Location</dt>
-                        <dd className="font-semibold text-steel-200 mt-0.5 flex items-center gap-1">
-                          <MapPin className="h-3 w-3 text-olive-400" />
-                          {hit.current_location?.location_name || "Central Armory"}
-                        </dd>
-                      </div>
-                    </div>
+                    {/* 3. The firearm itself */}
+                    <ScanSection title="Details">
+                      <ScanRow label="Condition">
+                        <span className="inline-flex items-center gap-2">
+                          <span className={cn("h-2 w-2 rounded-full", CONDITION_DOT[hit.condition_status] ?? "bg-steel-500")} aria-hidden />
+                          {CONDITIONS[hit.condition_status]?.label ?? "Unknown"}
+                        </span>
+                      </ScanRow>
+                      <ScanRow label="Caliber">{hit.caliber || "—"}</ScanRow>
+                      <ScanRow label="Kept at">{hit.current_location?.location_name ?? "—"}</ScanRow>
+                    </ScanSection>
                   </div>
 
-                  {/* Operational Action Buttons */}
-                  <div className="space-y-2 pt-3 border-t border-olive-700/20 mt-auto">
-                    <div className={canRelease ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"}>
-                      {canRelease && (
-                        <button
-                          onClick={() => router.push(isCheckedOut
-                            // A checked-out firearm is returned from its open issuance in the ledger.
-                            ? `/transactions?equipment_id=${hit.equipment_id}`
-                            : `/transactions/new?equipment_id=${hit.equipment_id}`)}
-                          className="btn-primary text-xs py-2 flex items-center justify-center gap-1.5"
-                        >
-                          <span>{isCheckedOut ? "Process Return" : "Issue Firearm"}</span>
-                          <ArrowRight className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-
+                  {/* What to do next */}
+                  <div className="shrink-0 space-y-2">
+                    {canRelease && hit.availability_status !== 3 && (
+                      <button
+                        onClick={() => router.push(isCheckedOut
+                          // A checked-out firearm is returned from its open issuance in the ledger.
+                          ? `/transactions?equipment_id=${hit.equipment_id}`
+                          : `/transactions/new?equipment_id=${hit.equipment_id}`)}
+                        className="btn-primary min-h-10 w-full text-sm"
+                      >
+                        <span>{isCheckedOut ? "Process Return" : "Issue Firearm"}</span>
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         onClick={() => router.push(`/firearms/${hit.equipment_id}`)}
-                        className="btn-secondary text-xs py-2 flex items-center justify-center gap-1.5"
+                        className="btn-secondary min-h-10 px-2 text-xs"
                       >
                         <ExternalLink className="h-3.5 w-3.5" />
                         <span>Full Record</span>
                       </button>
+                      <button
+                        onClick={() => router.push(`/maintenance?equipment_id=${hit.equipment_id}`)}
+                        className="btn-secondary min-h-10 px-2 text-xs"
+                      >
+                        <Wrench className="h-3.5 w-3.5" />
+                        <span>Maintenance</span>
+                      </button>
                     </div>
-
-                    <button
-                      onClick={() => router.push(`/maintenance`)}
-                      className="btn-ghost text-xs w-full py-1.5 flex items-center justify-center gap-1.5 text-steel-400 hover:text-olive-200"
-                    >
-                      <Wrench className="h-3 w-3" />
-                      <span>Log Maintenance Record</span>
-                    </button>
                   </div>
                 </motion.div>
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-center p-6 space-y-3">
-                  <div className="h-16 w-16 rounded-full bg-steel-900 border border-olive-700/40 flex items-center justify-center text-olive-400/60 shadow-inner">
-                    <ScanLine className="h-8 w-8 animate-pulse" />
+                <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center p-4 text-center space-y-3 lg:min-h-0">
+                  <div className="h-14 w-14 rounded-full bg-steel-900 border border-olive-700/40 flex items-center justify-center text-olive-400/70">
+                    <QrCode className="h-7 w-7" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-bold text-olive-100">Awaiting Target Acquisition</h3>
-                    <p className="text-xs text-steel-400 mt-1 max-w-xs">
-                      Align the firearm&apos;s QR code label within the optical reticle to immediately retrieve the official armory dossier.
+                    <h3 className="text-sm font-semibold text-olive-100">No firearm scanned yet</h3>
+                    <p className="text-xs leading-relaxed text-steel-300 mt-1 max-w-xs">
+                      Point the camera at a firearm&apos;s QR label, or upload a photo of it. Its details and what to do next show here.
                     </p>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-[11px] text-steel-500 font-mono pt-2">
-                    <span className="h-1.5 w-1.5 rounded-full bg-olive-400 animate-ping" />
-                    SYSTEM SENSORS ARMED
                   </div>
                 </div>
               )}
             </AnimatePresence>
-          </div>
+          </section>
         </div>
       </div>
+
 
       {/* RECENT SCANS HISTORY TABLE */}
       {recentScans.length > 0 && (
@@ -651,5 +625,56 @@ export default function ScanPage() {
       )}
     </div>
   </>
+  );
+}
+
+/** "Sep 19, 2026 at 3:08 AM" */
+const LONG_DATE = "MMM d, yyyy 'at' h:mm a";
+
+/** Condition shown as a coloured dot beside its name (quieter than a second badge). */
+const CONDITION_DOT: Record<number, string> = {
+  1: "bg-emerald-400",
+  2: "bg-olive-400",
+  3: "bg-amber-400",
+  4: "bg-red-400",
+};
+
+function holderName(tx: ActiveTransaction | null) {
+  if (!tx?.user) return null;
+  return `${tx.user.rank ? `${tx.user.rank} ` : ""}${tx.user.first_name} ${tx.user.last_name}`;
+}
+
+/** Why it can't be issued, when it is under maintenance (an overdue return shows in red under Custody). */
+function ScanNotice({ firearm }: { firearm: FirearmLookupResult }) {
+  if (firearm.availability_status === 3) {
+    return (
+      <p className="flex items-start gap-2 rounded-lg bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-200">
+        <Wrench className="mt-px h-4 w-4 shrink-0 text-amber-300" />
+        <span>Under maintenance. It can&apos;t be issued until it is back in the armory.</span>
+      </p>
+    );
+  }
+  return null;
+}
+
+/** A titled group of label and value rows on a quiet panel. */
+function ScanSection({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section>
+      <div className="mb-1.5 flex items-baseline justify-between gap-3">
+        <h4 className="text-xs font-semibold text-steel-300">{title}</h4>
+        {aside && <span className="text-right text-[11px]">{aside}</span>}
+      </div>
+      <dl className="space-y-2 rounded-lg bg-steel-900/50 px-3 py-2.5">{children}</dl>
+    </section>
+  );
+}
+
+function ScanRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-3">
+      <dt className="text-xs text-steel-400">{label}</dt>
+      <dd className="break-words text-sm text-steel-100">{children}</dd>
+    </div>
   );
 }
