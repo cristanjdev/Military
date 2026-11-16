@@ -115,7 +115,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   <header>
     <div class="eyebrow">ArmoryDB · ESP32 GPS tracker</div>
     <h1>Armory Tracker Wiring</h1>
-    <p class="lede">The tracker as it is built now: an ESP32 DevKit and a GPS module on a breadboard, three status lights, and a 21700 battery feeding the USB port through a charger and a 5 V boost board. Two resistors let the tracker measure its own battery. Pins match the tracker's firmware settings.</p>
+    <p class="lede">The tracker as it is built now: an ESP32 DevKit and a GPS module on a breadboard, three status lights, and a 21700 battery feeding the USB port through a charger and a 5 V step-up (boost) board. Two resistors let the tracker measure its own battery. Pins match the tracker's firmware settings.</p>
   </header>
 
   <div class="editor">
@@ -151,7 +151,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
           <li><span class="qty">1×</span><span>21700 Li-ion battery, 3.7 V 5,000 mAh, in a holder</span></li>
           <li><span class="qty">1×</span><span>TP4056 charger board with protection</span></li>
           <li><span class="qty">1×</span><span>Slide switch (on/off)</span></li>
-          <li><span class="qty">1×</span><span>5 V boost board with USB output</span></li>
+          <li><span class="qty">1×</span><span>5 V step-up (boost) board with USB output</span></li>
           <li><span class="qty">2×</span><span>100 kΩ resistor (brown, black, yellow)</span></li>
           <li><span class="qty">1×</span><span>Short USB to micro-USB data cable</span></li>
         </ul>
@@ -165,7 +165,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
           <li>Each LED's long leg (+) faces the resistor; the short leg (−) goes to ground.</li>
           <li>Pin order is the common 30-pin DevKit V1. If your board differs, go by the labels printed next to each pin.</li>
           <li>Keep the ceramic antenna facing the sky.</li>
-          <li>Set the boost board to 5.0 V with a multimeter before plugging in the ESP32.</li>
+          <li>If the step-up board has an adjustment screw, set it to 5.0 V with a multimeter before plugging in the ESP32. Boards with a fixed 5 V USB output need no setting.</li>
           <li>Charge through the TP4056's USB-C port. Turn the switch off while charging.</li>
           <li>D34 is on the pin row the breadboard covers, so solder its wire to the pin (or use the perfboard build). Then set <code>HAS_BATTERY_MONITOR 1</code> and upload again; the system warns at 20% and 10%.</li>
         </ul>
@@ -345,7 +345,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   el("text", { x: gx2 + 12, y: gy1 + 55, "font-size": 9, fill: "#6a7b8b" }, gps, "9600 baud");
   el("text", { x: gx2 + 12, y: gy1 + 68, "font-size": 9, fill: "#6a7b8b" }, gps, "runs on 3.3 V");
 
-  /* ---------- 21700 battery -> TP4056 charger -> switch -> 5 V boost -> USB (left of the board) ---------- */
+  /* ---------- 21700 battery -> TP4056 charger -> switch -> 5 V step-up -> USB (left of the board) ---------- */
   const pw = el("g", {}, svg);
   const mono = "IBM Plex Mono, monospace";
   const pad = (x, y, t, ty) => {
@@ -374,14 +374,14 @@ code { font-family: var(--font-mono); font-size: .92em; }
   // on/off switch in the + line
   el("rect", { x: 118, y: 312, width: 24, height: 22, rx: 3, fill: "#2b2f35" }, pw);
   el("rect", { x: 121, y: 316, width: 9, height: 14, rx: 1.5, fill: "#c9ced4" }, pw);
-  // 5 V boost with a USB-A output
+  // 5 V step-up (boost) with a USB-A output
   el("rect", { x: 33, y: 404, width: 120, height: 80, rx: 4, fill: "rgba(20,30,40,.22)" }, pw);
   el("rect", { x: 30, y: 400, width: 120, height: 80, rx: 4, fill: "#1e6b5c", stroke: "#114238" }, pw);
   pad(90, 408, "IN−", 421); pad(130, 408, "IN+", 421);
   el("rect", { x: 142, y: 433, width: 30, height: 24, rx: 2, fill: "#c9ced4", stroke: "#7f8790" }, pw);
   el("rect", { x: 150, y: 439, width: 20, height: 12, rx: 1, fill: "#8d959e" }, pw);
-  el("text", { x: 72, y: 450, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: "#ffffff" }, pw, "5 V boost");
-  el("text", { x: 72, y: 462, "text-anchor": "middle", "font-size": 6.5, "font-family": mono, fill: "#cdeee6" }, pw, "USB out");
+  el("text", { x: 72, y: 450, "text-anchor": "middle", "font-size": 10, "font-weight": 700, fill: "#ffffff" }, pw, "5 V step-up");
+  el("text", { x: 72, y: 462, "text-anchor": "middle", "font-size": 6.5, "font-family": mono, fill: "#cdeee6" }, pw, "boost · USB out");
   el("circle", { cx: 50, cy: 470, r: 2.6, fill: "#ff4a3d" }, pw);
   // battery level divider: Battery+ -> 100k -> D34 -> 100k -> GND
   el("line", { x1: 186, x2: 186, y1: 212, y2: 326, stroke: "#9aa1a8", "stroke-width": 1.6 }, pw);
@@ -426,11 +426,11 @@ code { font-family: var(--font-mono); font-size: .92em; }
       pts: [[200, 172], [204, 172], [204, 212], [130, 212], [130, 230]] },
     { id: "bn", group: "Battery", color: "black", from: "Battery −", to: "TP4056 B−", why: "Battery negative.",
       pts: [[20, 172], [12, 172], [12, 212], [90, 212], [90, 230]] },
-    { id: "so", group: "Battery", color: "red", from: "TP4056 OUT+", to: "Switch → boost IN+", why: "The on/off switch sits in the + line. The boost board raises 3.7 V to 5 V.",
+    { id: "so", group: "Battery", color: "red", from: "TP4056 OUT+", to: "Switch → step-up IN+", why: "The on/off switch sits in the + line. The step-up (boost) board raises the battery's 3.7 V to the 5 V the ESP32 needs.",
       multi: [[[130, 278], [130, 312]], [[130, 334], [130, 408]]] },
-    { id: "sg", group: "Battery", color: "black", from: "TP4056 OUT−", to: "Boost IN−", why: "Ground from the charger to the boost board.",
+    { id: "sg", group: "Battery", color: "black", from: "TP4056 OUT−", to: "Step-up IN−", why: "Ground from the charger to the step-up board.",
       pts: [[90, 278], [90, 408]] },
-    { id: "usb", group: "Battery", color: "usb", from: "Boost USB 5 V", to: "ESP32 micro-USB", why: "5 V in; the board makes its own 3.3 V. Set the boost to 5.0 V before plugging in.", usb: true,
+    { id: "usb", group: "Battery", color: "usb", from: "Step-up USB 5 V", to: "ESP32 micro-USB", why: "5 V in through the normal USB cable; the board makes its own 3.3 V. If the step-up has an adjustment screw, set it to 5.0 V before plugging in.", usb: true,
       pts: null },
     { id: "bs", group: "Battery level", color: "yellow", from: "Battery + → 100 kΩ", to: "ESP32 D34", why: "Half the battery voltage reaches D34, so the tracker reports its battery level. Set HAS_BATTERY_MONITOR 1.",
       multi: [[[186, 212], [186, 226]], [[186, 276], [582, 276], [582, hy("a")]]] },
@@ -491,7 +491,7 @@ code { font-family: var(--font-mono); font-size: .92em; }
   <svg viewBox="0 0 1170 640" role="img" aria-label="Schematic of the ESP32 GPS tracker" style="min-width:820px">
     <rect width="1170" height="640" fill="#f7f9fb"/>
     <g font-family="IBM Plex Mono, monospace" fill="#22303c" stroke="none">
-      <!-- 21700 battery -> TP4056 -> switch -> 5 V boost -> ESP32 USB -->
+      <!-- 21700 battery -> TP4056 -> switch -> 5 V step-up -> ESP32 USB -->
       <rect x="30" y="100" width="80" height="80" rx="8" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
       <g stroke="#22303c"><line x1="62" y1="122" x2="62" y2="158" stroke-width="2.5"/><line x1="76" y1="130" x2="76" y2="150" stroke-width="6"/></g>
       <text x="100" y="116" text-anchor="middle" font-size="12" font-weight="700">+</text>
@@ -505,8 +505,8 @@ code { font-family: var(--font-mono); font-size: .92em; }
         <text x="176" y="194" text-anchor="end">OUT−</text><text x="246" y="194">OUT+</text>
         <text x="176" y="374" text-anchor="end">IN−</text><text x="246" y="374">IN+</text></g>
       <rect x="150" y="380" width="120" height="90" rx="8" fill="#ffffff" stroke="#22303c" stroke-width="2"/>
-      <text x="210" y="420" text-anchor="middle" font-size="13" font-weight="600" font-family="Archivo, sans-serif">5 V boost</text>
-      <text x="210" y="436" text-anchor="middle" font-size="9" fill="#6a7b8b">USB out</text>
+      <text x="210" y="420" text-anchor="middle" font-size="13" font-weight="600" font-family="Archivo, sans-serif">5 V step-up</text>
+      <text x="210" y="436" text-anchor="middle" font-size="9" fill="#6a7b8b">boost · USB out</text>
       <!-- ESP32 -->
       <rect x="360" y="120" width="230" height="400" rx="8" fill="#1e2836"/>
       <text x="475" y="300" text-anchor="middle" font-size="17" font-weight="700" fill="#e8eef4" font-family="Archivo, sans-serif">ESP32</text>
