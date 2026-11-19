@@ -74,27 +74,57 @@ h1 { margin: 0; font-size: clamp(26px, 4vw, 36px); line-height: 1.1; font-weight
 .wire, .usb { cursor: pointer; transition: opacity .15s; }
 svg.focus .wire:not(.on), svg.focus .usb:not(.on) { opacity: .18; }
 .tip {
-  position: absolute; pointer-events: none; max-width: 280px; z-index: 2;
-  background: #17212b; color: #f2f6fa; font-size: 13px; line-height: 1.4;
-  padding: 8px 10px; border-radius: 6px; box-shadow: 0 6px 18px rgb(0 0 0 / .25);
+  position: absolute; pointer-events: none; width: max-content; max-width: 300px; z-index: 2;
+  background: #17212b; color: #f2f6fa; font-size: 13px; line-height: 1.45;
+  padding: 10px 12px; border-radius: 8px; box-shadow: 0 6px 18px rgb(0 0 0 / .25);
+  display: grid; gap: 6px;
 }
-.tip b { font-family: var(--font-mono); font-weight: 600; display: block; margin-bottom: 2px; }
+.tip-head { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.tip-head .sw { margin-top: 0; }
+.tip-route { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 10px; }
+.tip-route span { color: #93a3b3; font-size: 12px; line-height: 1.6; }
+.tip-route b { font-weight: 600; }
+.tip-why { color: #d4dde6; }
+.tip-note { color: #ffd98a; }
 
 .below { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); gap: 22px; align-items: start; }
 @media (max-width: 860px) { .below { grid-template-columns: minmax(0, 1fr); } }
 section h2 { margin: 0 0 10px; font-size: 18px; font-weight: 700; }
-.group-title { font: 600 11px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 16px 0 6px; }
+.group-title { font: 600 13px/1.3 var(--font-ui); color: var(--muted); margin: 16px 0 6px; }
 .group-title:first-of-type { margin-top: 0; }
-.conns { display: grid; gap: 2px; }
+.section-intro { margin: -4px 0 14px; color: var(--muted); font-size: 14px; }
+#conns { display: grid; gap: 22px; }
+.step-group { display: grid; gap: 4px; }
+.step-group h3 { margin: 0; font-size: 15px; font-weight: 700; }
+.group-intro { margin: 0 0 6px; color: var(--muted); font-size: 13.5px; }
 .conn {
-  display: grid; grid-template-columns: 14px minmax(0, 1fr) minmax(0, 1.3fr); gap: 10px; align-items: start;
-  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+  display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; align-items: start;
+  padding: 10px 12px; border-radius: 8px; cursor: pointer;
 }
 .conn:hover, .conn.on { background: var(--accent-soft); }
-.sw { width: 14px; height: 14px; border-radius: 3px; margin-top: 3px; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .25); }
-.pin { font: 500 13px/1.45 var(--font-mono); }
-.why { font-size: 13.5px; color: var(--muted); }
-@media (max-width: 520px) { .conn { grid-template-columns: 14px minmax(0, 1fr); } .why { grid-column: 2; } }
+.num {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--chip); color: var(--fg); font: 600 12.5px/1 var(--font-ui); font-variant-numeric: tabular-nums;
+}
+.conn.on .num { background: var(--accent); color: #fff; }
+.step-body { display: grid; gap: 5px; min-width: 0; }
+.wire-name { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.sw { width: 14px; height: 14px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgb(0 0 0 / .25); }
+.sw-usb { border-radius: 7px; }
+.route { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 14.5px; }
+.end { display: inline-flex; align-items: center; gap: 6px; }
+.part { font-weight: 600; }
+.pinchip {
+  font: 500 12.5px/1 var(--font-mono); background: var(--chip); color: var(--fg);
+  padding: 4px 7px; border-radius: 5px; white-space: nowrap;
+}
+.conn.on .pinchip, .conn:hover .pinchip { background: var(--surface); }
+.arrow { color: var(--muted); }
+.via { color: var(--muted); font-size: 13.5px; }
+.why { margin: 0; font-size: 13.5px; color: var(--muted); }
+.note { margin: 0; font-size: 13px; color: #8a5a00; background: #fff4d6; padding: 6px 9px; border-radius: 6px; }
+:root[data-theme="dark"] .note { color: #ffd98a; background: #3a2e12; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .note { color: #ffd98a; background: #3a2e12; } }
 
 .card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
 .parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: 14px; }
@@ -135,7 +165,8 @@ code { font-family: var(--font-mono); font-size: .92em; }
 
   <div class="below">
     <section>
-      <h2>Connections</h2>
+      <h2>How to connect it</h2>
+      <p class="section-intro">Follow the steps in order. Tap a step to light up its wire on the diagram above.</p>
       <div id="conns"></div>
     </section>
     <div class="stack">
@@ -399,9 +430,9 @@ code { font-family: var(--font-mono); font-size: .92em; }
   el("rect", { x: lx + 14, y: ly, width: 132, height: 80, rx: 5, fill: "#2b3540", stroke: "#1b2229" }, lp);
   el("rect", { x: lx + 20, y: ly + 6, width: 120, height: 66, rx: 2, fill: "#dfe9f3" }, lp);
   el("path", { d: `M${lx} ${ly + 84} h160 l-10 10 h-140 z`, fill: "#9aa6b2", stroke: "#6e7a86" }, lp);
-  el("text", { x: lx + 80, y: ly + 34, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: "#22303c" }, lp, "Laptop");
-  el("text", { x: lx + 80, y: ly + 48, "text-anchor": "middle", "font-size": 8, "font-family": "IBM Plex Mono, monospace", fill: "#4e5d6b" }, lp, "ArmoryDB :8000");
-  el("text", { x: lx + 80, y: ly + 62, "text-anchor": "middle", "font-size": 7.5, fill: "#4e5d6b" }, lp, "same Wi-Fi / phone hotspot");
+  el("text", { x: lx + 80, y: ly + 34, "text-anchor": "middle", "font-size": 10.5, "font-weight": 700, fill: "#22303c" }, lp, "Online server");
+  el("text", { x: lx + 80, y: ly + 48, "text-anchor": "middle", "font-size": 8, "font-family": "IBM Plex Mono, monospace", fill: "#4e5d6b" }, lp, "militarygps.vercel.app");
+  el("text", { x: lx + 80, y: ly + 62, "text-anchor": "middle", "font-size": 7.5, fill: "#4e5d6b" }, lp, "through the phone hotspot");
   // radio link from the module antenna, routed above the LED tags
   const rx0 = ax + aw / 2, ry0 = ey1 - 4;
   el("path", { d: `M${rx0} ${ry0 - 26} V100 Q${rx0} 84 ${rx0 - 16} 84 H${lx + 148}`, fill: "none", stroke: "#1f6fd1", "stroke-width": 1.6, "stroke-dasharray": "5 5" }, lp);
@@ -417,49 +448,92 @@ code { font-family: var(--font-mono); font-size: .92em; }
     green: ["#2fae55", "#1b7536"], yellow: ["#f2c230", "#a7811a"], usb: ["#2b2f35", "#0d0f12"],
   };
   const X = c => hx(c), Y = r => hy(r);
+  // Each wire, written for the person building it: which wire, from which part and pin, to which part and pin.
+  // from/to are [part, pin]; via is a part the wire passes through on the way. Drawing order stays as listed.
   const WIRES = [
-    { id: "pw3", group: "Power", color: "red", from: "ESP32 3V3", to: "Top + rail", why: "3.3 V on the top rail, for the GPS module.",
+    { id: "pw3", group: "power", color: "red", from: ["ESP32", "3V3"], to: ["Breadboard", "top + strip"],
+      why: "Gives the top + strip 3.3 V. The GPS takes its power from here.",
       pts: [[X(9), Y("j")], [X(9), Y("l1")], [X(3), Y("l1")], [X(3), Y("Tp")]] },
-    { id: "pwg", group: "Power", color: "black", from: "ESP32 GND", to: "Top − rail", why: "Ground on the top rail, shared by the GPS and the LEDs.",
+    { id: "pwg", group: "power", color: "black", from: ["ESP32", "GND"], to: ["Breadboard", "top − strip"],
+      why: "Ground. The GPS and all three lights share it.",
       pts: [[X(10), Y("j")], [X(10), Y("l2")], [X(1), Y("l2")], [X(1), Y("Tm")]] },
-    { id: "bp", group: "Battery", color: "red", from: "Battery +", to: "TP4056 B+", why: "The 21700 cell into the charger board. Its protection cuts the power before the cell is over-discharged.",
+    { id: "bp", group: "battery", color: "red", from: ["Battery", "+"], to: ["TP4056 charger", "B+"],
+      why: "The battery into the charger board. The board also cuts the power before the battery runs too low, which protects it.",
       pts: [[200, 172], [204, 172], [204, 212], [130, 212], [130, 230]] },
-    { id: "bn", group: "Battery", color: "black", from: "Battery −", to: "TP4056 B−", why: "Battery negative.",
+    { id: "bn", group: "battery", color: "black", from: ["Battery", "−"], to: ["TP4056 charger", "B−"],
+      why: "Battery negative into the charger board.",
       pts: [[20, 172], [12, 172], [12, 212], [90, 212], [90, 230]] },
-    { id: "so", group: "Battery", color: "red", from: "TP4056 OUT+", to: "Switch → step-up IN+", why: "The on/off switch sits in the + line. The step-up (boost) board raises the battery's 3.7 V to the 5 V the ESP32 needs.",
+    { id: "so", group: "battery", color: "red", from: ["TP4056 charger", "OUT+"], via: "the on/off switch", to: ["5 V step-up", "IN+"],
+      why: "The switch sits on this wire, so it turns the whole tracker on and off. The step-up raises the battery's 3.7 V to the 5 V the ESP32 needs.",
       multi: [[[130, 278], [130, 312]], [[130, 334], [130, 408]]] },
-    { id: "sg", group: "Battery", color: "black", from: "TP4056 OUT−", to: "Step-up IN−", why: "Ground from the charger to the step-up board.",
+    { id: "sg", group: "battery", color: "black", from: ["TP4056 charger", "OUT−"], to: ["5 V step-up", "IN−"],
+      why: "Ground from the charger to the step-up.",
       pts: [[90, 278], [90, 408]] },
-    { id: "usb", group: "Battery", color: "usb", from: "Step-up USB 5 V", to: "ESP32 micro-USB", why: "5 V in through the normal USB cable; the board makes its own 3.3 V. If the step-up has an adjustment screw, set it to 5.0 V before plugging in.", usb: true,
-      pts: null },
-    { id: "bs", group: "Battery level", color: "yellow", from: "Battery + → 100 kΩ", to: "ESP32 D34", why: "Half the battery voltage reaches D34, so the tracker reports its battery level. Set HAS_BATTERY_MONITOR 1.",
+    { id: "usb", group: "battery", color: "usb", from: ["5 V step-up", "USB port"], to: ["ESP32", "micro-USB port"],
+      why: "An ordinary USB cable carries the 5 V into the ESP32. The ESP32 makes its own 3.3 V from it.",
+      note: "If the step-up has a small adjustment screw, set it to 5.0 V with a multimeter before plugging in the ESP32. Fixed 5 V boards need no setting.",
+      usb: true, pts: null },
+    { id: "bs", group: "level", color: "yellow", from: ["Battery", "+"], via: "a 100 kΩ resistor", to: ["ESP32", "D34"],
+      why: "Lets the ESP32 read the battery voltage, so the system can show the battery level.",
+      note: "The breadboard covers D34, so solder this wire to the pin. Then set HAS_BATTERY_MONITOR to 1 in the firmware and upload again.",
       multi: [[[186, 212], [186, 226]], [[186, 276], [582, 276], [582, hy("a")]]] },
-    { id: "bg", group: "Battery level", color: "black", from: "D34 → 100 kΩ", to: "Top − rail", why: "The second 100 kΩ to ground halves the voltage: a full 4.2 V cell shows 2.1 V at D34.",
+    { id: "bg", group: "level", color: "black", from: ["ESP32", "D34"], via: "a second 100 kΩ resistor", to: ["Breadboard", "top − strip"],
+      why: "The two resistors together halve the voltage, so a full 4.2 V battery reads as a safe 2.1 V on D34.",
       pts: [[186, 326], [240, 326]] },
-    { id: "gv", group: "GPS module", color: "red", from: "GPS VCC", to: "Top + rail", why: "Powers the GPS at 3.3 V. Never 5 V.",
+    { id: "gv", group: "gps", color: "red", from: ["GPS", "VCC"], to: ["Breadboard", "top + strip"],
+      why: "Powers the GPS with 3.3 V.",
+      note: "Never connect the GPS to 5 V. It can damage the module.",
       pts: [[X(39), gy], [X(39), Y("Tp")]] },
-    { id: "gg", group: "GPS module", color: "black", from: "GPS GND", to: "Top − rail", why: "GPS ground.",
+    { id: "gg", group: "gps", color: "black", from: ["GPS", "GND"], to: ["Breadboard", "top − strip"],
+      why: "Ground for the GPS.",
       pts: [[X(42), gy], [X(42), Y("Tm")]] },
-    { id: "gt", group: "GPS module", color: "orange", from: "GPS TX", to: "ESP32 D18", why: "Position data into the ESP32 (GPS_RX_PIN 18).",
+    { id: "gt", group: "gps", color: "orange", from: ["GPS", "TX"], to: ["ESP32", "D18"],
+      why: "The GPS sends its position to the ESP32 on this wire.",
+      note: "TX always goes to the other side's receive pin. If the GPS light never comes on, check that TX and RX are not swapped.",
       pts: [[X(41), gy], [X(41), Y("l4")], [X(17), Y("l4")], [X(17), Y("j")]] },
-    { id: "gr", group: "GPS module", color: "purple", from: "GPS RX", to: "ESP32 D19", why: "Settings from the ESP32 to the GPS (GPS_TX_PIN 19).",
+    { id: "gr", group: "gps", color: "purple", from: ["GPS", "RX"], to: ["ESP32", "D19"],
+      why: "The ESP32 sends settings to the GPS on this wire.",
       pts: [[X(40), gy], [X(40), Y("l3")], [X(18), Y("l3")], [X(18), Y("j")]] },
-    { id: "lr", group: "Status lights", color: "white", from: "ESP32 D22", to: "330 Ω → red LED +", why: "Send light: one flash per position sent, three quick flashes if the laptop rejected it.",
+    { id: "lr", group: "lights", color: "white", from: ["ESP32", "D22"], via: "a 330 Ω resistor", to: ["Red LED", "long leg (+)"],
+      why: "Send light. One flash for each position sent, three quick flashes if the server refused it.",
       pts: [[X(22), Y("j")], [X(22), Y("l1")], [X(27), Y("l1")], [X(27), Y("j")]] },
-    { id: "lb", group: "Status lights", color: "blue", from: "ESP32 D21", to: "330 Ω → blue LED +", why: "GPS fix light: on while the GPS has a usable position.",
+    { id: "lb", group: "lights", color: "blue", from: ["ESP32", "D21"], via: "a 330 Ω resistor", to: ["Blue LED", "long leg (+)"],
+      why: "GPS light. Stays on while the GPS knows where it is.",
       pts: [[X(19), Y("j")], [X(19), Y("l2")], [X(30), Y("l2")], [X(30), Y("j")]] },
-    { id: "lg", group: "Status lights", color: "green", from: "ESP32 D4", to: "330 Ω → green LED +", why: "Wi-Fi light: on while connected, fast blinking in setup mode.",
+    { id: "lg", group: "lights", color: "green", from: ["ESP32", "D4"], via: "a 330 Ω resistor", to: ["Green LED", "long leg (+)"],
+      why: "Wi-Fi light. Stays on while connected to the hotspot, blinks fast in setup mode.",
       pts: [[X(13), Y("j")], [X(13), Y("l5")], [X(33), Y("l5")], [X(33), Y("j")]] },
-    { id: "lk", group: "Status lights", color: "black", from: "LED − legs (×3)", to: "Top − rail", why: "Each LED's short leg goes to ground.",
+    { id: "lk", group: "lights", color: "black", count: 3, from: ["Each LED's", "short leg (−)"], to: ["Breadboard", "top − strip"],
+      why: "Ground for the three lights. Without it they stay dark.",
       multi: [[[X(28), Y("a")], [X(28), Y("Tm")]], [[X(31), Y("a")], [X(31), Y("Tm")]], [[X(34), Y("a")], [X(34), Y("Tm")]]] },
   ];
+
+  // The connection steps, in the order to build them. Battery last, with the switch off.
+  const GROUPS = [
+    { id: "power", title: "Power the breadboard",
+      intro: "Two wires from the ESP32 feed the top strips of the breadboard. The GPS and the lights take their power from there." },
+    { id: "gps", title: "GPS module", intro: "Four wires. The GPS runs on 3.3 V." },
+    { id: "lights", title: "Status lights",
+      intro: "Each LED gets a 330 Ω resistor in front of its long leg. The short leg goes to ground." },
+    { id: "battery", title: "Battery, switch and step-up", intro: "Do this last, with the switch off." },
+    { id: "level", title: "Battery level (optional)",
+      intro: "Two 100 kΩ resistors let the tracker report how full its battery is, with warnings at 20% and 10%. The tracker works without them." },
+  ];
+  const COLOR_NAME = { red: "Red", black: "Black", orange: "Orange", purple: "Purple", white: "White", blue: "Blue",
+    green: "Green", yellow: "Yellow" };
+  const wireName = w => w.usb ? "USB cable" : `${COLOR_NAME[w.color]} wire${w.count ? "s" : ""}`;
+  let stepNo = 0;
+  GROUPS.forEach(g => WIRES.filter(w => w.group === g.id).forEach(w => { w.step = ++stepNo; }));
+  const endText = ([part, pin]) => `${part} ${pin}`;
+  const plainLabel = w => `Step ${w.step}, ${wireName(w).toLowerCase()}: from ${endText(w.from)}` +
+    `${w.via ? `, through ${w.via},` : ""} to ${endText(w.to)}. ${w.why}${w.note ? " " + w.note : ""}`;
 
   const wiresG = el("g", {}, svg);
   const pathOf = pts => "M" + pts.map(p => p.join(" ")).join(" L");
   WIRES.forEach(w => {
     const [core, edge] = W[w.color];
     const g = el("g", { class: w.usb ? "usb" : "wire", "data-id": w.id, tabindex: 0, role: "button",
-      "aria-label": `${w.from} to ${w.to}. ${w.why}` }, wiresG);
+      "aria-label": plainLabel(w) }, wiresG);
     if (w.usb) {
       const d = `M186 445 C 220 445, ${ex1 - 60} ${ecy}, ${ex1 - 14} ${ecy}`;
       el("path", { d, fill: "none", stroke: "transparent", "stroke-width": 16 }, g);
@@ -589,17 +663,27 @@ code { font-family: var(--font-mono); font-size: .92em; }
 
   /* ---------- connections list ---------- */
   const conns = document.getElementById("conns");
-  let lastGroup = "";
-  WIRES.forEach(w => {
-    if (w.group !== lastGroup) {
-      lastGroup = w.group;
-      const t = document.createElement("div"); t.className = "group-title"; t.textContent = w.group; conns.appendChild(t);
-    }
-    const row = document.createElement("div");
-    row.className = "conn"; row.tabIndex = 0; row.dataset.id = w.id;
-    row.innerHTML = `<span class="sw" style="background:${W[w.color][0]}"></span>
-      <span class="pin">${w.from} → ${w.to}</span><span class="why">${w.why}</span>`;
-    conns.appendChild(row);
+  const endHtml = ([part, pin]) => `<span class="end"><span class="part">${part}</span> <span class="pinchip">${pin}</span></span>`;
+  const routeHtml = w => `<span class="route">${endHtml(w.from)}<span class="arrow" aria-hidden="true">→</span>` +
+    `${w.via ? `<span class="via">through ${w.via}</span><span class="arrow" aria-hidden="true">→</span>` : ""}${endHtml(w.to)}</span>`;
+  GROUPS.forEach(g => {
+    const block = document.createElement("div");
+    block.className = "step-group";
+    block.innerHTML = `<h3>${g.title}</h3><p class="group-intro">${g.intro}</p>`;
+    WIRES.filter(w => w.group === g.id).forEach(w => {
+      const row = document.createElement("div");
+      row.className = "conn"; row.tabIndex = 0; row.dataset.id = w.id;
+      row.setAttribute("role", "button"); row.setAttribute("aria-label", plainLabel(w));
+      row.innerHTML = `<span class="num">${w.step}</span>
+        <div class="step-body">
+          <div class="wire-name"><span class="sw${w.usb ? " sw-usb" : ""}" style="background:${W[w.color][0]}"></span>${wireName(w)}</div>
+          ${routeHtml(w)}
+          <p class="why">${w.why}</p>
+          ${w.note ? `<p class="note">${w.note}</p>` : ""}
+        </div>`;
+      block.appendChild(row);
+    });
+    conns.appendChild(block);
   });
 
   /* ---------- interaction ---------- */
@@ -611,7 +695,11 @@ code { font-family: var(--font-mono); font-size: .92em; }
     document.querySelectorAll("[data-id]").forEach(n => n.classList.toggle("on", n.dataset.id === id));
     if (!id) { tip.hidden = true; return; }
     const w = byId[id];
-    tip.innerHTML = `<b>${w.from} → ${w.to}</b>${w.why}`;
+    tip.innerHTML = `<span class="tip-head"><span class="sw${w.usb ? " sw-usb" : ""}" style="background:${W[w.color][0]}"></span>` +
+      `Step ${w.step} · ${wireName(w)}</span>` +
+      `<span class="tip-route"><span>From</span><b>${endText(w.from)}</b>` +
+      `${w.via ? `<span>Through</span><b>${w.via.replace(/^(an?|the) /, "")}</b>` : ""}<span>To</span><b>${endText(w.to)}</b></span>` +
+      `<span class="tip-why">${w.why}</span>${w.note ? `<span class="tip-note">${w.note}</span>` : ""}`;
     tip.hidden = false;
     const box = canvas.getBoundingClientRect();
     let x, y;
@@ -638,7 +726,15 @@ code { font-family: var(--font-mono); font-size: .92em; }
   document.querySelectorAll(".conn").forEach(r => {
     r.addEventListener("mouseenter", () => { if (!pinned) focus(r.dataset.id); });
     r.addEventListener("mouseleave", () => { if (!pinned) focus(null); });
-    r.addEventListener("click", () => { pinned = pinned === r.dataset.id ? null : r.dataset.id; focus(pinned); });
+    r.addEventListener("click", () => {
+      pinned = pinned === r.dataset.id ? null : r.dataset.id;
+      // On a phone the diagram is far above the list: bring it into view so the lit wire can be seen.
+      const box = canvas.getBoundingClientRect();
+      if (pinned && (box.bottom < 60 || box.top > window.innerHeight - 60)) {
+        canvas.scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "center" });
+        setTimeout(() => focus(pinned), 450);
+      } else focus(pinned);
+    });
     r.addEventListener("focus", () => focus(r.dataset.id));
     r.addEventListener("blur", () => { if (!pinned) focus(null); });
   });
