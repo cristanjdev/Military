@@ -339,3 +339,34 @@
 }
 
 
+
+/* Toasts: the icon and the title share the first line; the message runs below at full width,
+   not indented under the icon. Unlayered so it overrides sonner's own injected styles. */
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has(> [data-icon]) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has(> [data-icon]) > [data-content] {
+  display: contents;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has(> [data-icon]) > [data-icon] {
+  grid-column: 1;
+  grid-row: 1;
+  margin: 0;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has(> [data-icon]) [data-title] {
+  grid-column: 2;
+  grid-row: 1;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has(> [data-icon]) [data-description] {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has(> [data-icon]) > [data-button] {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: 6px 0 0;
+}
