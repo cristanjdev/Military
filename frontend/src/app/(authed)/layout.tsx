@@ -27,6 +27,7 @@ const ROUTE_ROLES: Record<string, string[] | "*"> = {
   "/notifications": "*",
   "/audit":         ["Administrator", "Command Officer", "S4 Officer"],
   "/users":         ["Administrator", "Command Officer"],
+  "/field-test":    ["Administrator", "Command Officer", "S4 Officer", "Armory Custodian"],
   "/reports":       ["Administrator", "Command Officer", "S4 Officer", "Armory Custodian"],
   "/settings":      "*",
 };

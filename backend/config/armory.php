@@ -19,6 +19,17 @@ return [
         'battery_absent_mv'       => (int) env('ARMORY_BATTERY_ABSENT_MV', 2500),
     ],
 
+    // Targets for the field test page (FieldTestReport). Latency and distance use the
+    // gps.latency_budget_seconds and gps.accuracy_meters limits above.
+    'field_test' => [
+        'latency_target_pct'     => (int) env('ARMORY_TEST_LATENCY_PCT', 95),     // % of updates within the latency limit
+        'distance_target_pct'    => (int) env('ARMORY_TEST_DISTANCE_PCT', 90),    // % of positions within the distance limit
+        'range_target_meters'    => (int) env('ARMORY_TEST_RANGE_METERS', 10),    // phone-to-tracker distance that must still work
+        'reliability_target_pct' => (int) env('ARMORY_TEST_RELIABILITY_PCT', 95),
+        'geofence_target_pct'    => (int) env('ARMORY_TEST_GEOFENCE_PCT', 95),
+        'alert_target_pct'       => (int) env('ARMORY_TEST_ALERT_PCT', 95),
+    ],
+
     'session' => [
         'timeout_minutes' => (int) env('ARMORY_SESSION_TIMEOUT_MINUTES', 15),
     ],

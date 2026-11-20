@@ -4,6 +4,7 @@ use App\Http\Controllers\AuditLogController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\BiometricStepUpController;
 use App\Http\Controllers\DashboardController;
+use App\Http\Controllers\FieldTestController;
 use App\Http\Controllers\FirearmController;
 use App\Http\Controllers\GpsController;
 use App\Http\Controllers\GpsLocationController;
@@ -199,6 +200,18 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
             Route::get('audit-logs',           [AuditLogController::class, 'index']);
             Route::get('audit-logs/actions',   [AuditLogController::class, 'actions']);
             Route::get('audit-logs/verify',    [AuditLogController::class, 'verify']);
+        });
+
+        // Field tests of the tracker: measured latency, distance, range, reliability, geofence and alerts.
+        Route::middleware('role:Administrator,Command Officer,S4 Officer,Armory Custodian')->group(function () {
+            Route::get('field-tests',                  [FieldTestController::class, 'index']);
+            Route::post('field-tests',                 [FieldTestController::class, 'store']);
+            Route::get('field-tests/{id}',             [FieldTestController::class, 'show']);
+            Route::patch('field-tests/{id}/reference', [FieldTestController::class, 'reference']);
+            Route::post('field-tests/{id}/marks',      [FieldTestController::class, 'mark']);
+            Route::post('field-tests/{id}/undo',       [FieldTestController::class, 'undo']);
+            Route::post('field-tests/{id}/finish',     [FieldTestController::class, 'finish']);
+            Route::delete('field-tests/{id}',          [FieldTestController::class, 'destroy']);
         });
 
         // Reports — operational staff only; security-sensitive reports also require Secret clearance

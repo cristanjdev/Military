@@ -4,10 +4,11 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Fingerprint, Lock, Loader2, AlertTriangle, X, Timer, Eye, EyeOff } from "lucide-react";
+import Link from "next/link";
+import { KeyRound, Fingerprint, Lock, Loader2, AlertTriangle, X, Timer, Eye, EyeOff, Gauge } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { useAuthStore } from "@/store/auth";
+import { useAuthStore, hasRole } from "@/store/auth";
 
 interface SystemSettings {
   totp_required: boolean;
@@ -30,12 +31,21 @@ export default function SettingsPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = user?.role === "Administrator";
   const settings = useSystemSettings(isAdmin);
+  // The tracker field test is a testing tool, so it lives here rather than in the sidebar.
+  const canFieldTest = hasRole(user, "Administrator", "Command Officer", "S4 Officer", "Armory Custodian");
 
   return (
     <div className="space-y-6 w-full">
-      <div>
-        <h1 className="text-2xl font-bold text-olive-50">Settings</h1>
-        <p className="text-sm text-steel-400">Manage your authentication methods and password.</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-olive-50">Settings</h1>
+          <p className="text-sm text-steel-400">Manage your authentication methods and password.</p>
+        </div>
+        {canFieldTest && (
+          <Link href="/field-test" className="btn-secondary self-start sm:self-auto">
+            <Gauge className="h-4 w-4" /> Field Test
+          </Link>
+        )}
       </div>
 
       <PasswordChangeSection />
