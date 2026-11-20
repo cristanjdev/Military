@@ -108,7 +108,50 @@ class AuthTest extends TestCase
         ]);
 
         $response->assertStatus(423)
-            ->assertJson(['message' => 'Account is locked.']);
+            ->assertJson(['locked' => true])
+            ->assertJsonStructure(['message', 'locked_until', 'retry_after']);
+    }
+
+    public function test_the_attempt_that_locks_the_account_says_it_is_locked(): void
+    {
+        config(['armory.lockout_attempts' => 2]);
+        $this->postJson('/api/v1/auth/login', ['username' => 'admin', 'password' => 'wrong'])->assertStatus(401);
+
+        $this->postJson('/api/v1/auth/login', ['username' => 'admin', 'password' => 'wrong'])
+            ->assertStatus(423)
+            ->assertJson(['locked' => true]);
+    }
+
+    public function test_wrong_password_while_locked_neither_extends_the_lock_nor_reveals_the_password(): void
+    {
+        $user = User::where('username', 'admin')->first();
+        $lockedUntil = now()->addMinutes(10)->startOfSecond();
+        $user->forceFill(['failed_login_attempts' => 5, 'locked_until' => $lockedUntil])->save();
+
+        $wrong = $this->postJson('/api/v1/auth/login', ['username' => 'admin', 'password' => 'wrong']);
+        $right = $this->postJson('/api/v1/auth/login', ['username' => 'admin', 'password' => 'Admin@10RCDG!2025']);
+
+        $wrong->assertStatus(423);
+        $right->assertStatus(423);
+        $this->assertSame($wrong->json('message'), $right->json('message'));
+
+        $user->refresh();
+        $this->assertSame(5, (int) $user->failed_login_attempts);
+        $this->assertTrue($user->locked_until->equalTo($lockedUntil));
+    }
+
+    public function test_an_expired_lock_gives_a_fresh_set_of_tries(): void
+    {
+        $user = User::where('username', 'admin')->first();
+        $user->forceFill(['failed_login_attempts' => 10, 'locked_until' => now()->subMinute()])->save();
+
+        $this->postJson('/api/v1/auth/login', ['username' => 'admin', 'password' => 'wrong'])
+            ->assertStatus(401);
+
+        $user->refresh();
+        $this->assertSame(1, (int) $user->failed_login_attempts);
+        $this->assertNull($user->locked_until);
+        $this->assertFalse($user->isLocked());
     }
 
     public function test_inactive_account_cannot_login(): void

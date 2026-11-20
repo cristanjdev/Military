@@ -159,7 +159,7 @@ class ReportController extends Controller
      */
     public function securityIncidents(Request $request)
     {
-        $securityActions = ['failed_login', 'access_denied', 'account_locked', 'gps_signature_invalid'];
+        $securityActions = ['failed_login', 'access_denied', 'account_locked', 'login_while_locked', 'gps_signature_invalid'];
 
         $auditRows = AuditLog::with('user')
             ->whereIn('action', $securityActions)

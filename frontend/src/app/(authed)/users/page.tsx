@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Loader2, Users as UsersIcon, Pencil, Trash2, X } from "lucide-react";
+import { Plus, Loader2, Users as UsersIcon, Pencil, Trash2, X, LockOpen } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { CLEARANCES, fmtRelative } from "@/lib/utils";
@@ -24,6 +24,31 @@ export default function UsersPage() {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["users"],
     queryFn: async () => (await api.get("/users", { params: { per_page: 100 } })).data,
+    // Picks up accounts that get locked (or unlock on their own) while the page is open.
+    refetchInterval: 60_000,
+  });
+
+  // Sign-in locks run out on their own, so keep "minutes left" current.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(interval);
+  }, []);
+  const lockMinutesLeft = (u: any) => {
+    const until = u.locked_until ? new Date(u.locked_until).getTime() : 0;
+    return until > now ? Math.ceil((until - now) / 60_000) : 0;
+  };
+
+  const unlock = useMutation({
+    mutationFn: (id: number) => api.post(`/users/${id}/unlock`),
+    onSuccess: (res) => {
+      toast.success(res.data?.message ?? "Account unlocked.");
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
+    onError: (e: any) => {
+      toast.error(e.response?.data?.message ?? "Could not unlock the account.");
+      qc.invalidateQueries({ queryKey: ["users"] });
+    },
   });
 
   const { data: roles } = useQuery({
@@ -243,7 +268,9 @@ export default function UsersPage() {
           <tbody>
             {isError && <tr><td colSpan={6} className="py-0"><DataError onRetry={refetch} /></td></tr>}
             {isLoading && !isError && <tr><td colSpan={6} className="text-center py-4 text-steel-400">Loading…</td></tr>}
-            {data?.data?.map((u: any) => (
+            {data?.data?.map((u: any) => {
+              const lockLeft = lockMinutesLeft(u);
+              return (
               <tr key={u.user_id} className="border-t border-steel-800">
                 <td className="py-1.5">
                   <p className="text-olive-100">{u.rank} {u.first_name} {u.last_name}</p>
@@ -252,10 +279,35 @@ export default function UsersPage() {
                 <td className="text-center"><span className="pill pill-tactical">{u.role?.role_name}</span></td>
                 <td className="text-center text-xs">{CLEARANCES[u.security_clearance]}</td>
                 <td className="text-center text-xs text-steel-400">{u.last_login_at ? fmtRelative(u.last_login_at) : "Never"}</td>
-                <td className="text-center"><span className={`pill ${u.status ? "pill-ok" : "pill-muted"}`}>{u.status ? "Active" : "Inactive"}</span></td>
+                <td className="text-center">
+                  {lockLeft > 0 ? (
+                    <div className="flex flex-col items-center gap-0.5">
+                      <span className="pill pill-critical normal-case tracking-normal">Locked</span>
+                      <span className="text-[11px] text-steel-400" title="Locked after too many wrong passwords">
+                        {lockLeft <= 1 ? "under a minute left" : `${lockLeft} min left`}
+                      </span>
+                    </div>
+                  ) : (
+                    <span className={`pill ${u.status ? "pill-ok" : "pill-muted"}`}>{u.status ? "Active" : "Inactive"}</span>
+                  )}
+                </td>
                 <td className="text-center">
                   {canTouch(u) ? (
                     <div className="flex justify-center gap-1">
+                      {lockLeft > 0 && (
+                        <button
+                          onClick={() => unlock.mutate(u.user_id)}
+                          disabled={unlock.isPending}
+                          className="btn-ghost text-xs text-amber-300 hover:text-amber-200"
+                          title={`Unlock ${u.username} so they can sign in now`}
+                          aria-label={`Unlock ${u.username}`}
+                        >
+                          {unlock.isPending && unlock.variables === u.user_id
+                            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            : <LockOpen className="h-3.5 w-3.5" />}
+                          <span>Unlock</span>
+                        </button>
+                      )}
                       <button onClick={() => startEdit(u)} className="btn-ghost text-xs"><Pencil className="h-3.5 w-3.5" /></button>
                       <button
                         onClick={() => setDeactivateTarget(u)}
@@ -267,7 +319,8 @@ export default function UsersPage() {
                   )}
                 </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

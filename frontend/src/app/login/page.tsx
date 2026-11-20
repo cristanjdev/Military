@@ -67,6 +67,12 @@ const RECAPTCHA_DEMO_BYPASS = DEMO_MODE && !RECAPTCHA_SITE_KEY;
 
 type AuthMode = "login" | "forgot_request" | "forgot_verify" | "forgot_new_password";
 
+/** "28:41" for the time left on an account lock. */
+function formatLockLeft(ms: number) {
+  const total = Math.ceil(ms / 1000);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export default function LoginPage() {
   const router = useRouter();
 
@@ -95,6 +101,20 @@ export default function LoginPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  // When the account is locked: the time it unlocks (ms), and a ticking clock for the countdown.
+  const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+  const [clock, setClock] = useState(() => Date.now());
+  const lockLeft = lockedUntil ? Math.max(0, lockedUntil - clock) : 0;
+
+  useEffect(() => {
+    if (!lockedUntil) return;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setClock(now);
+      if (now >= lockedUntil) setLockedUntil(null);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [lockedUntil]);
 
   // Countdown timer for resending reset code
   useEffect(() => {
@@ -237,7 +257,14 @@ export default function LoginPage() {
       // A reCAPTCHA token works once; make the user tick the box again for the next attempt.
       recaptchaRef.current?.reset();
       if (error instanceof AxiosError) {
-        if (error.response?.status === 429 && error.response.data?.recaptcha_required) {
+        if (error.response?.status === 423 && error.response.data?.locked) {
+          const seconds = Number(error.response.data.retry_after) || 60;
+          const now = Date.now();
+          setClock(now);
+          setLockedUntil(now + seconds * 1000);
+          setShowRecaptcha(false);
+          setPassword("");
+        } else if (error.response?.status === 429 && error.response.data?.recaptcha_required) {
           setShowRecaptcha(true);
           toast.warning("Too many failed attempts. Additional verification is required to retry.");
         } else {
@@ -443,7 +470,10 @@ export default function LoginPage() {
                     autoComplete="username"
                     className="input-field pl-9"
                     value={username}
-                    onChange={(e) => setUsername(e.target.value)}
+                    onChange={(e) => {
+                      setUsername(e.target.value);
+                      setLockedUntil(null);
+                    }}
                     placeholder="username or email@domain.com"
                     tabIndex={1}
                   />
@@ -489,7 +519,25 @@ export default function LoginPage() {
                   </button>
                 </div>
 
-                {showRecaptcha && (
+                {lockLeft > 0 && (
+                  <div role="alert" className="mt-3 mb-2 flex gap-3 rounded-md bg-red-900/25 p-3 text-sm leading-relaxed">
+                    <Lock className="mt-0.5 h-4 w-4 shrink-0 text-red-300" />
+                    <div>
+                      <p className="font-semibold text-red-200">
+                        This account is locked for{" "}
+                        <span className="tabular-nums">{formatLockLeft(lockLeft)}</span>
+                      </p>
+                      <p className="mt-1 text-xs text-steel-300">
+                        It was locked after too many wrong passwords. Wait for the time to run out, or ask an
+                        Administrator to unlock it, then sign in with the correct password. Forgot it? Use{" "}
+                        <span className="text-olive-300">Forgot password?</span> above to reset it, which also unlocks
+                        the account.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {showRecaptcha && lockLeft === 0 && (
                   <div className="mt-3 mb-2 rounded-md border border-amber-700/40 bg-amber-900/20 p-3 text-xs text-amber-200 text-center leading-relaxed space-y-3">
                     <p>Multiple failed attempts detected. Please confirm you are not a robot to continue.</p>
                     {RECAPTCHA_DEMO_BYPASS ? null : RECAPTCHA_SITE_KEY ? (
@@ -502,7 +550,7 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  disabled={loading || (showRecaptcha && !RECAPTCHA_DEMO_BYPASS && !recaptchaToken)}
+                  disabled={loading || lockLeft > 0 || (showRecaptcha && !RECAPTCHA_DEMO_BYPASS && !recaptchaToken)}
                   className="btn-primary w-full mt-6"
                   tabIndex={4}
                 >

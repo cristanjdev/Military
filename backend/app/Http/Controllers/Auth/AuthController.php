@@ -60,6 +60,24 @@ class AuthController extends Controller
 
         $accountKey = $user ? $user->username : $input;
         $failKey = "login-fail:{$accountKey}:{$ip}";
+        $lockoutAttempts = (int) config('armory.lockout_attempts', 5);
+
+        if ($user) {
+            // While locked, refuse every attempt before the password is checked: a wrong password must
+            // not restart the lock, and the reply must not hint whether the password was right.
+            if ($user->isLocked()) {
+                AuditLogger::log('login_while_locked', "Sign-in attempt while {$accountKey} is locked", $user, request: $request);
+
+                return $this->lockedResponse($user);
+            }
+
+            // A lock that has run out gives the account a fresh set of tries.
+            if ($user->locked_until !== null || $user->failed_login_attempts >= $lockoutAttempts) {
+                $user->forceFill(['failed_login_attempts' => 0, 'locked_until' => null])->save();
+                Cache::forget($failKey);
+            }
+        }
+
         $fails = (int) Cache::get($failKey, 0);
         $threshold = (int) config('armory.failed_login_threshold', 3);
 
@@ -86,27 +104,27 @@ class AuthController extends Controller
             if ($user) {
                 $user->increment('failed_login_attempts');
 
-                $lockoutAttempts = (int) config('armory.lockout_attempts', 5);
+                AuditLogger::log('failed_login', "Failed password for {$accountKey}", $user, request: $request);
+                AccountNotifier::failedLogin($user, $request, 'password');
+
                 if ($user->failed_login_attempts >= $lockoutAttempts) {
                     $lockoutMinutes = (int) config('armory.lockout_minutes', 30);
                     $user->update(['locked_until' => now()->addMinutes($lockoutMinutes)]);
 
-                    if ($user->failed_login_attempts === $lockoutAttempts) {
-                        Notification::create([
-                            'user_id'      => $user->user_id,
-                            'type'         => 'account_locked',
-                            'severity'     => Notification::SEVERITY_CRITICAL,
-                            'title'        => 'Account Locked',
-                            'message'      => "Account {$user->username} locked after {$lockoutAttempts} failed attempts. Unlocks in {$lockoutMinutes} min.",
-                            'payload'      => ['ip' => $ip, 'attempts' => $user->failed_login_attempts],
-                        ]);
-                    }
+                    Notification::create([
+                        'user_id'      => $user->user_id,
+                        'type'         => 'account_locked',
+                        'severity'     => Notification::SEVERITY_CRITICAL,
+                        'title'        => 'Account Locked',
+                        'message'      => "Account {$user->username} locked after {$lockoutAttempts} failed attempts. Unlocks in {$lockoutMinutes} min.",
+                        'payload'      => ['ip' => $ip, 'attempts' => $user->failed_login_attempts],
+                    ]);
 
-                    AuditLogger::log('account_locked', "Account {$user->username} locked after {$lockoutAttempts} failures", $user, request: $request);
+                    AuditLogger::log('account_locked', "Account {$user->username} locked for {$lockoutMinutes} minutes after {$lockoutAttempts} failures", $user, request: $request);
+
+                    // Say so on the attempt that locked it, instead of a plain "Invalid credentials".
+                    return $this->lockedResponse($user);
                 }
-
-                AuditLogger::log('failed_login', "Failed password for {$accountKey}", $user, request: $request);
-                AccountNotifier::failedLogin($user, $request, 'password');
             } else {
                 AuditLogger::log('failed_login', "Unknown username or email {$input}", request: $request);
                 AccountNotifier::failedLogin(null, $request, 'username or password', $input);
@@ -117,10 +135,6 @@ class AuthController extends Controller
 
         if ((int) $user->status !== User::STATUS_ACTIVE) {
             return response()->json(['message' => 'Account is inactive.'], 403);
-        }
-
-        if ($user->isLocked()) {
-            return response()->json(['message' => 'Account is locked.'], 423);
         }
 
         $challenge = bin2hex(random_bytes(32));
@@ -776,6 +790,21 @@ class AuthController extends Controller
         }
 
         Cache::put("login-challenge:{$token}", $state, now()->setTimestamp($expiresAt));
+    }
+
+    /** 423 with how long the lock has left, so the sign-in page can say when to try again. */
+    protected function lockedResponse(User $user): JsonResponse
+    {
+        $seconds = max(1, (int) ceil(now()->diffInSeconds($user->locked_until, false)));
+        $minutes = (int) ceil($seconds / 60);
+        $wait = $minutes <= 1 ? 'about a minute' : "{$minutes} minutes";
+
+        return response()->json([
+            'message'       => "This account is locked after too many wrong passwords. Try again in {$wait}, or reset your password.",
+            'locked'        => true,
+            'locked_until'  => $user->locked_until->toIso8601String(),
+            'retry_after'   => $seconds,
+        ], 423);
     }
 
     protected function verifyRecaptcha(string $token, string $ip): bool

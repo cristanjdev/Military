@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Notification;
 use App\Models\Role;
 use App\Models\Transaction;
 use App\Models\User;
@@ -211,5 +212,39 @@ class UserController extends Controller
         AccountNotifier::accountChanged($user, $request->user(), ['authenticator and fingerprint reset'], $request);
 
         return response()->json(['message' => "MFA reset for {$user->username}. They will re-enroll on next login."]);
+    }
+
+    /**
+     * Admin-only: lift a sign-in lock (too many wrong passwords) before its 30 minutes run out.
+     * The account also gets a fresh set of tries.
+     */
+    public function unlock(Request $request, int $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        $this->assertMayManage($request, $user);
+
+        if (! $user->isLocked()) {
+            return response()->json(['message' => "{$user->username} is not locked."], 422);
+        }
+
+        $user->forceFill(['failed_login_attempts' => 0, 'locked_until' => null])->save();
+
+        // The "Account locked" alert is dealt with.
+        Notification::where('user_id', $user->user_id)
+            ->where('type', 'account_locked')
+            ->where('status', Notification::STATUS_UNREAD)
+            ->update(['status' => Notification::STATUS_READ, 'read_at' => now()]);
+
+        AuditLogger::log(
+            action: 'account_unlock',
+            description: "Account {$user->username} unlocked by {$request->user()->username}",
+            user: $request->user(),
+            request: $request,
+            metadata: ['target_user_id' => $user->user_id],
+        );
+
+        AccountNotifier::accountChanged($user, $request->user(), ['sign-in lock lifted'], $request);
+
+        return response()->json(['message' => "{$user->username} is unlocked and can sign in again."]);
     }
 }

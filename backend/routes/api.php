@@ -182,6 +182,7 @@ Route::middleware('rate.strict')->prefix('v1')->group(function () {
             Route::patch('users/{id}',         [UserController::class, 'update']);
             Route::delete('users/{id}',        [UserController::class, 'destroy']);
             Route::post('users/{id}/reset-mfa',[UserController::class, 'resetMfa']);
+            Route::post('users/{id}/unlock',   [UserController::class, 'unlock']);
         });
 
         Route::middleware('role:Administrator')->group(function () {
