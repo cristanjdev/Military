@@ -382,7 +382,9 @@ function TestList({ onOpen }: { onOpen: (id: number) => void }) {
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["field-tests"],
     queryFn: async () => (await api.get<IndexPayload>("/field-tests")).data,
-    refetchInterval: 30_000,
+    // A test started on another phone shows up here without reloading.
+    refetchInterval: 10_000,
+    refetchIntervalInBackground: true,
   });
 
   const start = useMutation({
@@ -481,7 +483,7 @@ function TestView({ id, onBack }: { id: number; onBack: () => void }) {
   const [now, setNow] = useState(() => Date.now());
   const [confirm, setConfirm] = useState<"finish" | "delete" | null>(null);
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, refetch, dataUpdatedAt } = useQuery({
     queryKey: key,
     queryFn: async () => (await api.get<TestPayload>(`/field-tests/${id}`)).data,
     // Every 5 s while running; after the end, only while an alert or crossing is still being checked.
@@ -492,6 +494,8 @@ function TestView({ id, onBack }: { id: number; onBack: () => void }) {
       const { geofence, alerts } = d.report.metrics;
       return [...geofence.crossings, ...alerts.trials].some((r) => r.status === "waiting") ? 15_000 : false;
     },
+    // Someone following the test from another place keeps getting updates in a background tab.
+    refetchIntervalInBackground: true,
   });
 
   const running = !!data && !data.test.ended_at;
@@ -541,7 +545,8 @@ function TestView({ id, onBack }: { id: number; onBack: () => void }) {
   });
 
   if (isLoading) return <div className="flex justify-center py-16"><Loader2 className="h-5 w-5 animate-spin text-steel-400" /></div>;
-  if (isError || !data) return <div className="space-y-4"><BackButton onBack={onBack} /><DataError onRetry={() => refetch()} /></div>;
+  // A failed refresh keeps the last data on screen (the next one usually works in the field).
+  if (!data) return <div className="space-y-4"><BackButton onBack={onBack} /><DataError onRetry={() => refetch()} /></div>;
 
   const { test, report } = data;
   const marks = test.marks ?? [];
@@ -561,7 +566,7 @@ function TestView({ id, onBack }: { id: number; onBack: () => void }) {
 
       {test.ended_at && <ResultsTable report={report} test={test} />}
 
-      {running && <LiveStatus report={report} />}
+      {running && <LiveStatus report={report} now={now} updatedAt={dataUpdatedAt} failing={isError} />}
 
       {running && (
         <>
@@ -612,9 +617,11 @@ function BackButton({ onBack }: { onBack: () => void }) {
   );
 }
 
-/** What the tracker is doing right now. */
-function LiveStatus({ report }: { report: Report }) {
-  const p = report.last_position;
+/** What the tracker is doing right now, and when this page last heard from the server. */
+function LiveStatus({ report, now, updatedAt, failing }: { report: Report; now: number; updatedAt: number; failing: boolean }) {
+  const sinceUpdate = Math.max(0, (now - updatedAt) / 1000);
+  // Counts on between the 5-second updates.
+  const p = report.last_position ? { ...report.last_position, seconds_ago: report.last_position.seconds_ago + sinceUpdate } : null;
   const stale = !p || p.seconds_ago > report.interval_seconds * 2 + 15;
 
   return (
@@ -632,6 +639,11 @@ function LiveStatus({ report }: { report: Report }) {
           {p.inside_zone !== null && <span>{p.inside_zone ? "Inside a zone" : "Outside all zones"}</span>}
         </p>
       )}
+      <p className="mt-1 text-xs opacity-75">
+        {failing && sinceUpdate > 12
+          ? `Could not reach the server for ${duration(sinceUpdate)}; still trying. Check this phone's internet.`
+          : `Updates by itself every 5 s · last update ${duration(sinceUpdate)} ago`}
+      </p>
     </section>
   );
 }
