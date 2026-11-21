@@ -120,11 +120,43 @@ class FieldTestTest extends TestCase
         $this->assertEquals(100, $m['geofence']['pct']);
         $this->assertSame(20, $m['geofence']['crossings'][0]['delay_s']);
 
-        // Lost and restored both fired; one false "Signal Lost".
+        // Checked against when positions really arrived: nothing from 782 s to 1010 s (the kept
+        // position arriving), so "Signal Lost" was due and came at 950 s, and "Signal Restored" came
+        // with that first position back. The 128 s gap in the range
+        // walk is too short to expect one. The alert at 1090 s had no silence behind it.
+        $this->assertSame(['signal_lost', 'signal_restored'], array_column($m['alerts']['trials'], 'kind'));
         $this->assertSame(2, $m['alerts']['correct']);
         $this->assertSame(1, $m['alerts']['false_count']);
         $this->assertEquals(66.7, $m['alerts']['pct']);
-        $this->assertSame(150, $m['alerts']['trials'][0]['delay_s']);
+        $this->assertSame(168, $m['alerts']['trials'][0]['delay_s']);
+        $this->assertSame('hotspot_off', $m['alerts']['trials'][0]['during']);
+        $this->assertSame(0, $m['alerts']['trials'][1]['delay_s']);
+    }
+
+    public function test_alerts_follow_the_tracker_not_late_taps(): void
+    {
+        $id = $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])->json('test.field_test_id');
+
+        // The hotspot really went off after 300 s and came back at 600 s, but the tester tapped
+        // "off" too early and "on" two minutes late.
+        foreach (range(30, 900, 30) as $s) {
+            if ($s > 300 && $s < 600) {
+                continue;
+            }
+            $this->position($s, meters: 5, delay: 2);
+        }
+        $this->tap($id, 100, 'hotspot_off');
+        $this->tap($id, 720, 'hotspot_on');
+        $this->alert(480, 'signal_lost');
+        $this->alert(602, 'signal_restored');
+
+        $this->at(900);
+        $a = $this->getJson("/api/v1/field-tests/{$id}")->assertOk()->json('report.metrics.alerts');
+
+        $this->assertSame(2, $a['correct']);
+        $this->assertSame(0, $a['false_count']);
+        $this->assertEquals(100, $a['pct']);
+        $this->assertSame(178, $a['trials'][0]['delay_s']); // 302 s last position, alert at 480 s
     }
 
     public function test_steps_must_follow_in_order(): void
@@ -140,12 +172,15 @@ class FieldTestTest extends TestCase
         $mark('hotspot_on', 3)->assertStatus(422);   // hotspot never turned off
         $mark('hotspot_off', 4)->assertOk();
         $mark('hotspot_off', 5)->assertStatus(422);  // already off
+        $mark('zone_start', 6)->assertStatus(422)    // one step at a time
+            ->assertJsonPath('message', 'Stop "Alert trigger accuracy" first.');
 
-        $this->at(6);
+        $this->at(7);
         $this->postJson("/api/v1/field-tests/{$id}/undo")->assertOk()->assertJsonCount(0, 'test.marks');
+        $mark('zone_start', 8)->assertOk();
 
         // Starting again returns the running test.
-        $this->at(7);
+        $this->at(9);
         $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])
             ->assertOk()->assertJsonPath('test.field_test_id', $id);
     }

@@ -25,6 +25,14 @@ class FieldTestController extends Controller
         FieldTestMark::HOTSPOT_OFF => FieldTestMark::HOTSPOT_ON,
     ];
 
+    /** The step names on the page, for "stop it first". */
+    private const STEP_NAMES = [
+        FieldTestMark::SPOT_START  => 'Distance error',
+        FieldTestMark::RANGE_START => 'Hotspot range',
+        FieldTestMark::ZONE_START  => 'Geofence accuracy',
+        FieldTestMark::HOTSPOT_OFF => 'Alert trigger accuracy',
+    ];
+
     public function index(): JsonResponse
     {
         $tests = FieldTest::with(['firearm:equipment_id,serial_number,model', 'starter:user_id,rank,first_name,last_name'])
@@ -119,6 +127,10 @@ class FieldTestController extends Controller
         }
         if (isset(self::PAIRS[$kind]) && in_array($kind, $open, true)) {
             return response()->json(['message' => 'This step is already running.'], 422);
+        }
+        // One step at a time: each one needs the tracker (and the hotspot) in its own state.
+        if (isset(self::PAIRS[$kind]) && $open) {
+            return response()->json(['message' => 'Stop "' . self::STEP_NAMES[$open[0]] . '" first.'], 422);
         }
         $opener = array_search($kind, self::PAIRS, true);
         if ($opener !== false && ! in_array($opener, $open, true)) {

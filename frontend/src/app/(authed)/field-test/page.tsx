@@ -31,10 +31,14 @@ interface FieldTest {
   marks?: Mark[];
 }
 
-type Status = "ok" | "missed" | "waiting" | "too_short";
+type Status = "ok" | "missed" | "waiting";
 
 interface Crossing { kind: "entered" | "left"; tapped_at: string; detected_at: string | null; delay_s: number | null; status: Status }
-interface AlertTrial { kind: "signal_lost" | "signal_restored"; tapped_at: string; alert_at: string | null; delay_s: number | null; status: Status }
+/** One alert the system owed: "at" is when the tracker went quiet (lost) or was heard again (restored). */
+interface AlertTrial {
+  kind: "signal_lost" | "signal_restored"; at: string; quiet_s: number; during: "hotspot_off" | "range" | null;
+  alert_at: string | null; delay_s: number | null; status: Status;
+}
 
 interface Tally { samples: number; correct: number; missed: number; false_count: number; pct: number | null; target_pct: number; pass: boolean | null }
 
@@ -95,6 +99,18 @@ const MARK_LABEL: Record<string, string> = {
   hotspot_off: "Hotspot turned off",
   hotspot_on: "Hotspot turned on",
 };
+
+const STEPS: { open: string; close: string; name: string }[] = [
+  { open: "spot_start", close: "spot_end", name: "Distance error" },
+  { open: "range_start", close: "range_end", name: "Hotspot range" },
+  { open: "zone_start", close: "zone_end", name: "Geofence accuracy" },
+  { open: "hotspot_off", close: "hotspot_on", name: "Alert trigger accuracy" },
+];
+
+/** The step that is running, if any. Only one runs at a time. */
+function runningStep(marks: Mark[]): string | null {
+  return STEPS.find((s) => openedAt(marks, s.open, s.close))?.name ?? null;
+}
 
 /** When the step that `open` begins was last started, or null if it is not running. */
 function openedAt(marks: Mark[], open: string, close: string): string | null {
@@ -164,7 +180,9 @@ function resultRows(r: Report): ResultRow[] {
       metric: "Alert trigger accuracy",
       target: `≥ ${a.target_pct}% of alerts fired`,
       actual: a.pct === null ? "No data yet" : pct(a.pct),
-      detail: a.samples ? `${a.correct} of ${a.correct + a.missed} expected alerts fired, ${a.false_count} false` : "",
+      detail: a.samples
+        ? `${a.correct} of ${a.correct + a.missed} expected alerts fired over ${a.trials.filter((t) => t.kind === "signal_lost").length} signal losses, ${a.false_count} false`
+        : "",
       pass: a.pass,
     },
   ];
@@ -275,7 +293,6 @@ function Step({
 function StatusLine({ status, delay, waitingText }: { status: Status; delay: number | null; waitingText: string }) {
   if (status === "ok") return <span className="inline-flex items-center gap-1 text-emerald-300"><CheckCircle2 className="h-3.5 w-3.5" /> after {duration(delay !== null ? Math.max(0, delay) : null)}</span>;
   if (status === "waiting") return <span className="inline-flex items-center gap-1 text-steel-300"><Loader2 className="h-3.5 w-3.5 animate-spin" /> {waitingText}</span>;
-  if (status === "too_short") return <span className="text-amber-300">Hotspot was not off long enough; not counted</span>;
   return <span className="inline-flex items-center gap-1 text-red-300"><XCircle className="h-3.5 w-3.5" /> Not detected</span>;
 }
 
@@ -490,6 +507,9 @@ function TestView({ id, onBack }: { id: number; onBack: () => void }) {
   const marks = test.marks ?? [];
   const lastMark = marks[marks.length - 1];
   const busy = tap.isPending;
+  const current = runningStep(marks);
+  /** For a step's Start button: the other step that has to be stopped first. */
+  const blockedBy = (name: string) => (current && current !== name ? current : null);
 
   return (
     <div className="space-y-5">
@@ -506,10 +526,10 @@ function TestView({ id, onBack }: { id: number; onBack: () => void }) {
       {running && (
         <>
           <SpotStep test={test} report={report} onSaved={apply} />
-          <DistanceStep marks={marks} report={report} now={now} busy={busy} onTap={tap.mutate} hasSpot={report.metrics.distance.has_reference} />
-          <RangeStep marks={marks} report={report} now={now} busy={busy} onTap={tap.mutate} hasSpot={report.metrics.range.has_reference} />
-          <ZoneStep marks={marks} report={report} busy={busy} onTap={tap.mutate} />
-          <AlertStep marks={marks} report={report} now={now} busy={busy} onTap={tap.mutate} />
+          <DistanceStep marks={marks} report={report} now={now} busy={busy} onTap={tap.mutate} blockedBy={blockedBy("Distance error")} hasSpot={report.metrics.distance.has_reference} />
+          <RangeStep marks={marks} report={report} now={now} busy={busy} onTap={tap.mutate} blockedBy={blockedBy("Hotspot range")} hasSpot={report.metrics.range.has_reference} />
+          <ZoneStep marks={marks} report={report} busy={busy} onTap={tap.mutate} blockedBy={blockedBy("Geofence accuracy")} />
+          <AlertStep marks={marks} report={report} now={now} busy={busy} onTap={tap.mutate} blockedBy={blockedBy("Alert trigger accuracy")} />
           <ResultsTable report={report} test={test} />
         </>
       )}
@@ -636,9 +656,14 @@ function SpotStep({ test, report, onSaved }: { test: FieldTest; report: Report; 
 
 /* ---------- step 2: distance error ---------- */
 
-interface StepProps { marks: Mark[]; report: Report; now: number; busy: boolean; onTap: (kind: string) => void }
+interface StepProps { marks: Mark[]; report: Report; now: number; busy: boolean; onTap: (kind: string) => void; blockedBy: string | null }
 
-function DistanceStep({ marks, report, now, busy, onTap, hasSpot }: StepProps & { hasSpot: boolean }) {
+/** Shown next to a Start button while another step runs. */
+function Blocked({ by }: { by: string | null }) {
+  return by ? <span className="text-xs text-steel-400">Stop &ldquo;{by}&rdquo; first.</span> : null;
+}
+
+function DistanceStep({ marks, report, now, busy, onTap, blockedBy, hasSpot }: StepProps & { hasSpot: boolean }) {
   const since = openedAt(marks, "spot_start", "spot_end");
   const elapsed = since ? (now - new Date(since).getTime()) / 1000 : 0;
   const d = report.metrics.distance;
@@ -653,13 +678,13 @@ function DistanceStep({ marks, report, now, busy, onTap, hasSpot }: StepProps & 
         {since ? (
           <button type="button" className="btn-danger" disabled={busy} onClick={() => onTap("spot_end")}><Square className="h-4 w-4" /> Stop</button>
         ) : (
-          <button type="button" className="btn-primary" disabled={busy || !hasSpot} onClick={() => onTap("spot_start")}><Play className="h-4 w-4" /> Start</button>
+          <button type="button" className="btn-primary" disabled={busy || !hasSpot || !!blockedBy} onClick={() => onTap("spot_start")}><Play className="h-4 w-4" /> Start</button>
         )}
         {since && (
           <span className={cn("font-mono text-lg", elapsed >= 600 ? "text-emerald-300" : "text-steel-100")}>{clock(elapsed)}</span>
         )}
         {since && elapsed >= 600 && <span className="text-sm text-emerald-300">10 minutes reached. You can stop.</span>}
-        {!hasSpot && <span className="text-xs text-steel-400">Mark the spot first.</span>}
+        {!hasSpot ? <span className="text-xs text-steel-400">Mark the spot first.</span> : <Blocked by={blockedBy} />}
       </div>
       {d.samples > 0 && (
         <p className="text-sm text-steel-300">
@@ -672,7 +697,7 @@ function DistanceStep({ marks, report, now, busy, onTap, hasSpot }: StepProps & 
 
 /* ---------- step 3: hotspot range ---------- */
 
-function RangeStep({ marks, report, now, busy, onTap, hasSpot }: StepProps & { hasSpot: boolean }) {
+function RangeStep({ marks, report, now, busy, onTap, blockedBy, hasSpot }: StepProps & { hasSpot: boolean }) {
   const since = openedAt(marks, "range_start", "range_end");
   const elapsed = since ? (now - new Date(since).getTime()) / 1000 : 0;
   const g = report.metrics.range;
@@ -688,10 +713,10 @@ function RangeStep({ marks, report, now, busy, onTap, hasSpot }: StepProps & { h
         {since ? (
           <button type="button" className="btn-danger" disabled={busy} onClick={() => onTap("range_end")}><Square className="h-4 w-4" /> Stop</button>
         ) : (
-          <button type="button" className="btn-primary" disabled={busy || !hasSpot} onClick={() => onTap("range_start")}><Play className="h-4 w-4" /> Start</button>
+          <button type="button" className="btn-primary" disabled={busy || !hasSpot || !!blockedBy} onClick={() => onTap("range_start")}><Play className="h-4 w-4" /> Start</button>
         )}
         {since && <span className="font-mono text-lg text-steel-100">{clock(elapsed)}</span>}
-        {!hasSpot && <span className="text-xs text-steel-400">Mark the spot first.</span>}
+        {!hasSpot ? <span className="text-xs text-steel-400">Mark the spot first.</span> : <Blocked by={blockedBy} />}
       </div>
       {(since || g.farthest_m !== null) && (
         <div className="text-sm text-steel-300 space-y-0.5">
@@ -706,7 +731,7 @@ function RangeStep({ marks, report, now, busy, onTap, hasSpot }: StepProps & { h
 
 /* ---------- step 4: geofence ---------- */
 
-function ZoneStep({ marks, report, busy, onTap }: Omit<StepProps, "now">) {
+function ZoneStep({ marks, report, busy, onTap, blockedBy }: Omit<StepProps, "now">) {
   const running = !!openedAt(marks, "zone_start", "zone_end");
   const z = report.metrics.geofence;
   const inside = report.last_position?.inside_zone;
@@ -725,7 +750,10 @@ function ZoneStep({ marks, report, busy, onTap }: Omit<StepProps, "now">) {
             <button type="button" className="btn-danger" disabled={busy} onClick={() => onTap("zone_end")}><Square className="h-4 w-4" /> Stop</button>
           </>
         ) : (
-          <button type="button" className="btn-primary" disabled={busy} onClick={() => onTap("zone_start")}><Play className="h-4 w-4" /> Start</button>
+          <>
+            <button type="button" className="btn-primary" disabled={busy || !!blockedBy} onClick={() => onTap("zone_start")}><Play className="h-4 w-4" /> Start</button>
+            <Blocked by={blockedBy} />
+          </>
         )}
         {inside !== null && inside !== undefined && (
           <span className="text-xs text-steel-400">The system sees the tracker {inside ? "inside a zone" : "outside all zones"}.</span>
@@ -752,13 +780,22 @@ function ZoneStep({ marks, report, busy, onTap }: Omit<StepProps, "now">) {
 
 /* ---------- step 5: alerts ---------- */
 
-function AlertStep({ marks, report, now, busy, onTap }: StepProps) {
+/** "Quiet from 2:07:55 PM for 9 min 24 s, hotspot off" / "Back at 2:17:19 PM". */
+function trialText(t: AlertTrial): string {
+  const why = t.during === "hotspot_off" ? ", hotspot off" : t.during === "range" ? ", range walk" : "";
+  return t.kind === "signal_lost"
+    ? `Quiet from ${fmtDate(t.at, "h:mm:ss a")} for ${duration(t.quiet_s)}${why}: Signal Lost`
+    : `Back at ${fmtDate(t.at, "h:mm:ss a")}: Signal Restored`;
+}
+
+function AlertStep({ marks, report, now, busy, onTap, blockedBy }: StepProps) {
   const offSince = openedAt(marks, "hotspot_off", "hotspot_on");
   const elapsed = offSince ? (now - new Date(offSince).getTime()) / 1000 : 0;
   const a = report.metrics.alerts;
   const minOff = Math.ceil((a.silent_seconds + 60) / 60);
-  const lostFired = offSince && a.trials.some((t) => t.kind === "signal_lost" && t.tapped_at && t.status === "ok"
-    && new Date(t.tapped_at).getTime() >= new Date(offSince).getTime() - 1000);
+  // The tracker's last position may be up to one interval before the tap.
+  const lostFired = offSince && a.trials.some((t) => t.kind === "signal_lost" && t.status === "ok"
+    && new Date(t.at).getTime() >= new Date(offSince).getTime() - (report.interval_seconds + 15) * 1000);
 
   return (
     <Step n={5} icon={Bell} title="Alert trigger accuracy" running={!!offSince}>
@@ -766,11 +803,18 @@ function AlertStep({ marks, report, now, busy, onTap }: StepProps) {
         Turn the hotspot off and tap the button. Keep it off for at least {minOff} minutes, until the Signal Lost alert
         appears. Then turn it back on and tap again. Wait for Signal Restored. Repeat 5 times.
       </p>
+      <p className="text-xs text-steel-400">
+        The result is checked against the tracker itself: every time no position arrives for over {duration(a.silent_seconds)},
+        Signal Lost is due, and Signal Restored when positions come back. A late tap does not change it.
+      </p>
       <div className="flex flex-wrap items-center gap-3">
         {offSince ? (
           <button type="button" className="btn-primary" disabled={busy} onClick={() => onTap("hotspot_on")}><Wifi className="h-4 w-4" /> I turned the hotspot on</button>
         ) : (
-          <button type="button" className="btn-secondary" disabled={busy} onClick={() => onTap("hotspot_off")}><WifiOff className="h-4 w-4" /> I turned the hotspot off</button>
+          <>
+            <button type="button" className="btn-secondary" disabled={busy || !!blockedBy} onClick={() => onTap("hotspot_off")}><WifiOff className="h-4 w-4" /> I turned the hotspot off</button>
+            <Blocked by={blockedBy} />
+          </>
         )}
         {offSince && (
           <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -785,16 +829,14 @@ function AlertStep({ marks, report, now, busy, onTap }: StepProps) {
       {a.trials.length > 0 && (
         <ul className="space-y-1 text-sm">
           {a.trials.map((t, i) => (
-            <li key={t.tapped_at + t.kind + i} className="flex flex-wrap items-center gap-x-3">
-              <span className="whitespace-nowrap text-steel-200 sm:w-72">
-                {t.kind === "signal_lost" ? "Off" : "On"} at {fmtDate(t.tapped_at, "h:mm:ss a")}: {t.kind === "signal_lost" ? "Signal Lost" : "Signal Restored"}
-              </span>
+            <li key={t.at + t.kind + i} className="flex flex-wrap items-center gap-x-3">
+              <span className="text-steel-200 sm:w-96">{trialText(t)}</span>
               <StatusLine status={t.status} delay={t.delay_s} waitingText="Waiting for the alert…" />
             </li>
           ))}
           {a.false.map((f) => (
             <li key={f.alert_at + f.kind} className="text-amber-300">
-              {f.kind === "signal_lost" ? "Signal Lost" : "Signal Restored"} at {fmtDate(f.alert_at, "h:mm:ss a")} with no hotspot change
+              {f.kind === "signal_lost" ? "Signal Lost" : "Signal Restored"} at {fmtDate(f.alert_at, "h:mm:ss a")} while the tracker was sending (false)
             </li>
           ))}
         </ul>
@@ -810,7 +852,10 @@ function Details({ report }: { report: Report }) {
   const a = report.metrics.alerts;
   const items = useMemo(() => [
     ...z.crossings.map((c) => ({ at: c.tapped_at, text: `${c.kind === "left" ? "Left" : "Entered"} the zone`, status: c.status, delay: c.delay_s })),
-    ...a.trials.map((t) => ({ at: t.tapped_at, text: t.kind === "signal_lost" ? "Hotspot off: Signal Lost" : "Hotspot on: Signal Restored", status: t.status, delay: t.delay_s })),
+    ...a.trials.map((t) => ({
+      at: t.at, status: t.status, delay: t.delay_s,
+      text: t.kind === "signal_lost" ? `Tracker quiet for ${duration(t.quiet_s)}: Signal Lost` : "Tracker back: Signal Restored",
+    })),
   ].sort((x, y) => x.at.localeCompare(y.at)), [z.crossings, a.trials]);
 
   if (items.length === 0 && z.false.length === 0 && a.false.length === 0) return null;
@@ -833,7 +878,7 @@ function Details({ report }: { report: Report }) {
         ))}
         {a.false.map((f) => (
           <li key={f.alert_at + f.kind} className="text-amber-300">
-            {fmtDate(f.alert_at, "h:mm:ss a")}: {f.kind === "signal_lost" ? "Signal Lost" : "Signal Restored"} with no hotspot change (false)
+            {fmtDate(f.alert_at, "h:mm:ss a")}: {f.kind === "signal_lost" ? "Signal Lost" : "Signal Restored"} while the tracker was sending (false)
           </li>
         ))}
       </ul>

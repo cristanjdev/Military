@@ -16,7 +16,8 @@ use App\Models\Notification;
  *   Hotspot range       the farthest the tracker got from the phone (on the marked spot) and still sent live
  *   Signal reliability  positions received ÷ positions expected, one per tracker interval
  *   Geofence accuracy   zone crossings the system detected ÷ crossings the testers made (+ false ones)
- *   Alert accuracy      "Signal Lost" / "Signal Restored" alerts that fired ÷ hotspot off/on tries (+ false ones)
+ *   Alert accuracy      "Signal Lost" / "Signal Restored" alerts that fired ÷ times the tracker really went
+ *                       silent and came back (+ false ones), read from when its positions arrived
  *
  * Periods with the hotspot deliberately off, and the range walk, are left out of latency and
  * reliability: the tracker keeps up to 8 positions while it is cut off and sends them late, which
@@ -67,6 +68,7 @@ class FieldTestReport
                 $r = $l->received_at ? $l->received_at->getTimestamp() : $t;
                 return [
                     't'      => $t,
+                    'r'      => $r,
                     'delay'  => max(0, $r - $t),
                     'lat'    => (float) $l->latitude,
                     'lng'    => (float) $l->longitude,
@@ -79,12 +81,23 @@ class FieldTestReport
 
         $cutOff = array_merge($off, $range); // hotspot deliberately unreachable
 
+        // Older tests could run steps at once; the tracker is only still while nothing else runs.
+        $still = self::subtract([$start, $end], array_merge($range, $zone));
+        $spotStill = [];
+        foreach ($spot as [$a, $b]) {
+            foreach ($still as [$c, $d]) {
+                if (min($b, $d) > max($a, $c)) {
+                    $spotStill[] = [max($a, $c), min($b, $d), false];
+                }
+            }
+        }
+
         $latency     = self::latency($logs, $cutOff, $targets);
-        $distance    = self::distance($logs, $spot, $ref, $targets);
+        $distance    = self::distance($logs, $spotStill, $ref, $targets);
         $rangeResult = self::range($logs, $range, $ref, $interval, $now, $targets);
         $reliability = self::reliability($logs, $cutOff, $end, $interval, $targets);
         $geofence    = self::geofence($logs, $marks, $zone, $now, $targets);
-        $alerts      = self::alerts($test, $off, $range, $start, $end, $now, $targets);
+        $alerts      = self::alerts($test, $logs, $off, $range, $end, $now, $targets);
 
         $last = $logs ? end($logs) : null;
 
@@ -306,10 +319,32 @@ class FieldTestReport
         return self::tally($rows, $false, (int) $targets['geofence_target_pct']) + ['crossings' => $rows, 'false' => $false];
     }
 
-    private static function alerts(FieldTest $test, array $off, array $range, int $start, int $end, int $now, array $targets): array
+    /**
+     * Checked against what the tracker really did, not against the hotspot taps: every time no
+     * position reached the server for longer than the watchdog's window, "Signal Lost" should
+     * follow, and "Signal Restored" when positions arrive again. Any other such alert is false.
+     * A tester tapping late, or turning off the wrong phone, cannot change the result.
+     */
+    private static function alerts(FieldTest $test, array $logs, array $off, array $range, int $end, int $now, array $targets): array
     {
         $silent = TrackerWatchdog::onlineWindow();
         $lostWait = $silent + self::LOST_EXTRA;
+        $until = min($end, $now);
+
+        // When positions reached the server, in order (positions kept while offline arrive later).
+        $received = array_values(array_filter(array_column($logs, 'r'), fn($r) => $r <= $until));
+        sort($received);
+
+        // Silences: no position received for longer than the window. The last one may still be going on.
+        $outages = [];
+        for ($i = 1; $i < count($received); $i++) {
+            if ($received[$i] - $received[$i - 1] > $silent) {
+                $outages[] = [$received[$i - 1], $received[$i]];
+            }
+        }
+        if ($received && $until - end($received) > $silent) {
+            $outages[] = [end($received), null];
+        }
 
         $events = ['signal_lost' => [], 'signal_restored' => []];
         Notification::where('equipment_id', $test->equipment_id)
@@ -336,54 +371,66 @@ class FieldTestReport
             return null;
         };
 
+        $during = function (int $a, int $b) use ($off, $range): ?string {
+            foreach (['hotspot_off' => $off, 'range' => $range] as $name => $windows) {
+                foreach ($windows as $w) {
+                    if (min($b, $w[1]) >= max($a, $w[0])) {
+                        return $name;
+                    }
+                }
+            }
+            return null;
+        };
+
         $rows = [];
-        foreach ($off as [$a, $b, $open]) {
-            // A hotspot still off when the test was finished counts as turned on at the finish.
-            $closed = ! $open || $test->ended_at !== null;
-            $to = $a + $lostWait;
-            if ($closed) {
-                $to = min($to, $b + 30);
+        foreach ($outages as [$quiet, $back]) {
+            // The watchdog looks once a minute, so "Signal Lost" is due a little after the window ends.
+            $to = $quiet + $lostWait;
+            if ($back !== null) {
+                $to = min($to, $back + 30);
             }
-            $lost = $take('signal_lost', $a - 30, $to);
+            $lost = $take('signal_lost', $quiet + $silent - 5, $to);
 
-            if ($lost !== null) {
-                $status = 'ok';
-            } elseif ($closed && $b - $a < $silent + 60) {
-                $status = 'too_short';
-            } else {
-                $status = $now < $to ? 'waiting' : 'missed';
+            if ($lost === null && $back !== null && $back - $quiet < $silent + 60) {
+                continue; // back before the watchdog's next look: too short to expect an alert
             }
-            $rows[] = ['kind' => 'signal_lost', 'tapped_at' => date(DATE_ATOM, $a),
+
+            $cause = $during($quiet, $back ?? $until);
+            $rows[] = ['kind' => 'signal_lost', 'at' => date(DATE_ATOM, $quiet),
+                'quiet_s' => ($back ?? $until) - $quiet, 'during' => $cause,
                 'alert_at' => $lost !== null ? date(DATE_ATOM, $lost) : null,
-                'delay_s' => $lost !== null ? $lost - $a : null, 'status' => $status];
+                'delay_s' => $lost !== null ? $lost - $quiet : null,
+                'status' => $lost !== null ? 'ok' : ($now < $to ? 'waiting' : 'missed')];
 
-            // "Signal Restored" only follows a "Signal Lost".
-            if (! $open && $lost !== null) {
-                $back = $take('signal_restored', $b - 10, $b + self::RESTORE_WAIT);
-                $rows[] = ['kind' => 'signal_restored', 'tapped_at' => date(DATE_ATOM, $b),
-                    'alert_at' => $back !== null ? date(DATE_ATOM, $back) : null,
-                    'delay_s' => $back !== null ? $back - $b : null,
-                    'status' => $back !== null ? 'ok' : ($now < $b + self::RESTORE_WAIT ? 'waiting' : 'missed')];
+            // "Signal Restored" only follows a "Signal Lost", and is sent with the first new position.
+            if ($back !== null && $lost !== null) {
+                $restored = $take('signal_restored', $back - 10, $back + 60);
+                $rows[] = ['kind' => 'signal_restored', 'at' => date(DATE_ATOM, $back),
+                    'quiet_s' => $back - $quiet, 'during' => $cause,
+                    'alert_at' => $restored !== null ? date(DATE_ATOM, $restored) : null,
+                    'delay_s' => $restored !== null ? $restored - $back : null,
+                    'status' => $restored !== null ? 'ok' : ($now < $back + 60 ? 'waiting' : 'missed')];
             }
         }
 
-        // Alerts with no hotspot change behind them. The range walk cuts the signal on purpose, so
-        // alerts during it (and while it comes back) are expected, not false.
-        $expected = array_map(fn($w) => [$w[0], $w[1] + $lostWait + self::RESTORE_WAIT], $range);
+        // Alerts with no silence behind them, counted once the tracker had been heard from.
         $false = [];
-        foreach ($events as $type => $list) {
-            foreach ($list as $e) {
-                if (! $e['used'] && $e['t'] >= $start && $e['t'] <= $end && ! self::within($e['t'], $expected)) {
-                    $false[] = ['kind' => $type, 'alert_at' => date(DATE_ATOM, $e['t'])];
+        if ($received) {
+            foreach ($events as $type => $list) {
+                foreach ($list as $e) {
+                    if (! $e['used'] && $e['t'] >= $received[0] + $silent - 5 && $e['t'] <= $end) {
+                        $false[] = ['kind' => $type, 'alert_at' => date(DATE_ATOM, $e['t'])];
+                    }
                 }
             }
+            usort($false, fn($x, $y) => strcmp($x['alert_at'], $y['alert_at']));
         }
 
         return self::tally($rows, $false, (int) $targets['alert_target_pct'])
             + ['trials' => $rows, 'false' => $false, 'silent_seconds' => $silent];
     }
 
-    /** Correct ÷ (correct + missed + false); rows still waiting or too short are left out. */
+    /** Correct ÷ (correct + missed + false); rows still waiting are left out. */
     private static function tally(array $rows, array $false, int $target): array
     {
         $ok = count(array_filter($rows, fn($r) => $r['status'] === 'ok'));
