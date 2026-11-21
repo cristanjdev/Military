@@ -109,7 +109,7 @@ class FieldTestTest extends TestCase
 
         $this->assertEquals(40.0, $m['range']['farthest_m']);
         $this->assertTrue($m['range']['lost']);
-        $this->assertTrue($m['range']['pass']);
+        $this->assertArrayNotHasKey('pass', $m['range']); // no target in the manuscript
 
         // 18 received, 1 missed (the hotspot-off and range periods are not counted).
         $this->assertSame(18, $m['reliability']['received']);
@@ -157,6 +157,57 @@ class FieldTestTest extends TestCase
         $this->assertSame(0, $a['false_count']);
         $this->assertEquals(100, $a['pct']);
         $this->assertSame(178, $a['trials'][0]['delay_s']); // 302 s last position, alert at 480 s
+    }
+
+    public function test_startup_times_come_from_the_trackers_first_position(): void
+    {
+        config(['armory.iot.hmac_secret' => 'test-secret']);
+        $id = $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])->json('test.field_test_id');
+
+        // Sending every 5 s, switched off after 120 s, back on at 200 s.
+        foreach (range(30, 120, 5) as $s) {
+            $this->position($s, meters: 5, delay: 2);
+        }
+
+        // First position after power-on: taken 58 s after it started, reaching the server at 261 s.
+        $body = json_encode([
+            'equipment_id' => $this->firearm->equipment_id,
+            'device_id'    => 'TRK-TEST',
+            'captured_at'  => $this->t0->addSeconds(258)->utc()->format('Y-m-d\TH:i:s\Z'),
+            'latitude'     => self::REF_LAT,
+            'longitude'    => self::REF_LNG,
+            'satellites'   => 9,
+            'fix_age_ms'   => 800,
+            'post_ms'      => 2500,
+            'startup'      => ['uptime_ms' => 58000, 'wifi_ms' => 4200, 'sats_ms' => 9000, 'fix_ms' => 31000, 'reason' => 'power_on'],
+        ]);
+        $this->at(261);
+        $this->call('POST', '/api/v1/gps/ingest', [], [], [], [
+            'CONTENT_TYPE'           => 'application/json',
+            'HTTP_ACCEPT'            => 'application/json',
+            'HTTP_X_ARMORY_SIGNATURE' => hash_hmac('sha256', $body, 'test-secret'),
+        ], $body)->assertOk();
+
+        foreach (range(265, 400, 5) as $s) {
+            $this->position($s, meters: 5, delay: 2);
+        }
+
+        $this->at(405);
+        $m = $this->getJson("/api/v1/field-tests/{$id}")->assertOk()->json('report');
+
+        $this->assertSame(5, $m['interval_seconds']); // measured from the positions, not the server setting
+        $try = $m['metrics']['startup']['tries'][0];
+        $this->assertSame('power_on', $try['reason']);
+        $this->assertEquals(4.2, $try['wifi_s']);
+        $this->assertEquals(9.0, $try['satellites_s']);
+        $this->assertEquals(31.0, $try['fix_s']);
+        $this->assertSame(61, $try['first_position_s']);
+        $this->assertEquals(31.0, $m['metrics']['startup']['summary']['fix_s']['average']);
+
+        // The switched-off minutes are not missed updates.
+        $this->assertSame(0, $m['metrics']['reliability']['missed']);
+        $this->assertEquals(0.8, $m['metrics']['latency']['fix_age_s']);
+        $this->assertEquals(2.5, $m['metrics']['latency']['send_s']);
     }
 
     public function test_steps_must_follow_in_order(): void

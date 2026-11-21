@@ -6,6 +6,7 @@ use App\Models\FieldTest;
 use App\Models\FieldTestMark;
 use App\Models\GpsLog;
 use App\Models\Notification;
+use App\Models\TrackerStartup;
 
 /**
  * Turns a field test into measured numbers, from the tracker's own positions and the system's
@@ -14,7 +15,11 @@ use App\Models\Notification;
  *   Update latency      time from the GPS fix to the server receiving it (both are stored per position)
  *   Distance error      how far the positions are from the marked spot while the tracker sits on it
  *   Hotspot range       the farthest the tracker got from the phone (on the marked spot) and still sent live
- *   Signal reliability  positions received ÷ positions expected, one per tracker interval
+ *   Signal reliability  positions received ÷ positions expected, one per tracker interval (measured from
+ *                       the positions themselves, since a tracker's config may differ from the server's)
+ *   Startup times       seconds from power-on to Wi-Fi, first satellite, GPS fix and first position
+ *
+ * Only latency and distance have targets: the two the manuscript states. The rest are reported as measured.
  *   Geofence accuracy   zone crossings the system detected ÷ crossings the testers made (+ false ones)
  *   Alert accuracy      "Signal Lost" / "Signal Restored" alerts that fired ÷ times the tracker really went
  *                       silent and came back (+ false ones), read from when its positions arrived
@@ -62,7 +67,7 @@ class FieldTestReport
             ->whereBetween('captured_at', [$test->started_at, $test->ended_at ?? now()])
             ->orderBy('captured_at')
             ->limit(20000)
-            ->get(['captured_at', 'received_at', 'latitude', 'longitude', 'satellites', 'is_inside_geofence'])
+            ->get(['captured_at', 'received_at', 'latitude', 'longitude', 'satellites', 'is_inside_geofence', 'fix_age_ms', 'post_ms'])
             ->map(function (GpsLog $l) use ($ref) {
                 $t = $l->captured_at->getTimestamp();
                 $r = $l->received_at ? $l->received_at->getTimestamp() : $t;
@@ -70,6 +75,8 @@ class FieldTestReport
                     't'      => $t,
                     'r'      => $r,
                     'delay'  => max(0, $r - $t),
+                    'fixAge' => $l->fix_age_ms,
+                    'post'   => $l->post_ms,
                     'lat'    => (float) $l->latitude,
                     'lng'    => (float) $l->longitude,
                     'sats'   => $l->satellites,
@@ -79,7 +86,23 @@ class FieldTestReport
             })
             ->all();
 
-        $cutOff = array_merge($off, $range); // hotspot deliberately unreachable
+        // How often this tracker really sends (its config may differ from the server's setting).
+        $gaps = [];
+        for ($i = 1; $i < count($logs); $i++) {
+            if (($g = $logs[$i]['t'] - $logs[$i - 1]['t']) > 0) {
+                $gaps[] = $g;
+            }
+        }
+        sort($gaps);
+        if (count($gaps) >= 5) {
+            $interval = max(1, (int) round(self::percentile($gaps, 0.5)));
+        }
+
+        $startup = self::startups($test, $logs, $start);
+
+        // Hotspot deliberately unreachable, or the tracker switched off for the startup test.
+        $cutOff = array_merge($off, $range, $startup['off']);
+        unset($startup['off']);
 
         // Older tests could run steps at once; the tracker is only still while nothing else runs.
         $still = self::subtract([$start, $end], array_merge($range, $zone));
@@ -94,10 +117,10 @@ class FieldTestReport
 
         $latency     = self::latency($logs, $cutOff, $targets);
         $distance    = self::distance($logs, $spotStill, $ref, $targets);
-        $rangeResult = self::range($logs, $range, $ref, $interval, $now, $targets);
-        $reliability = self::reliability($logs, $cutOff, $end, $interval, $targets);
-        $geofence    = self::geofence($logs, $marks, $zone, $now, $targets);
-        $alerts      = self::alerts($test, $logs, $off, $range, $end, $now, $targets);
+        $rangeResult = self::range($logs, $range, $ref, $interval, $now);
+        $reliability = self::reliability($logs, $cutOff, $end, $interval);
+        $geofence    = self::geofence($logs, $marks, $zone, $now);
+        $alerts      = self::alerts($test, $logs, $off, $range, $end, $now);
 
         $last = $logs ? end($logs) : null;
 
@@ -126,31 +149,111 @@ class FieldTestReport
                 'reliability' => $reliability,
                 'geofence'    => $geofence,
                 'alerts'      => $alerts,
+                'startup'     => $startup,
             ],
         ];
+    }
+
+    /**
+     * Each power-on during the test, as the tracker reported it: seconds until it joined the hotspot,
+     * saw its first satellite, had a GPS fix, and its first position reached the server. Also
+     * returns the switched-off periods (last position before to first position after), which
+     * latency and reliability leave out.
+     */
+    private static function startups(FieldTest $test, array $logs, int $start): array
+    {
+        $received = array_column($logs, 'r');
+        sort($received);
+
+        $tries = [];
+        $off = [];
+        TrackerStartup::where('equipment_id', $test->equipment_id)
+            ->whereBetween('booted_at', [$test->started_at, $test->ended_at ?? now()])
+            ->orderBy('booted_at')
+            ->get()
+            ->each(function (TrackerStartup $s) use (&$tries, &$off, $received, $logs, $start) {
+                $boot = $s->booted_at->getTimestamp();
+                $first = $s->first_received_at->getTimestamp();
+                $before = $start;
+                foreach ($received as $r) {
+                    if ($r >= $boot) {
+                        break;
+                    }
+                    $before = $r;
+                }
+                // Off until just before its first position after power-on, which is a live one.
+                $firstTaken = $first;
+                foreach ($logs as $l) {
+                    if ($l['t'] >= $boot) {
+                        $firstTaken = $l['t'];
+                        break;
+                    }
+                }
+                $off[] = [$before, $firstTaken - 1, false];
+                $tries[] = [
+                    'booted_at'     => date(DATE_ATOM, $boot),
+                    'reason'        => $s->reason,
+                    'wifi_s'        => self::seconds($s->wifi_ms),
+                    'satellites_s'  => self::seconds($s->sats_ms),
+                    'fix_s'         => self::seconds($s->fix_ms),
+                    'first_position_s' => max(0, $first - $boot),
+                ];
+            });
+
+        $summary = [];
+        foreach (['wifi_s', 'satellites_s', 'fix_s', 'first_position_s'] as $key) {
+            $values = array_values(array_filter(array_column($tries, $key), fn($v) => $v !== null));
+            $summary[$key] = $values ? [
+                'average' => round(array_sum($values) / count($values), 1),
+                'fastest' => round(min($values), 1),
+                'slowest' => round(max($values), 1),
+                'count'   => count($values),
+            ] : null;
+        }
+
+        return ['tries' => $tries, 'summary' => $summary, 'off' => $off];
+    }
+
+    private static function seconds(?int $ms): ?float
+    {
+        return $ms === null ? null : round($ms / 1000, 1);
     }
 
     private static function latency(array $logs, array $cutOff, array $targets): array
     {
         $limit = (int) config('armory.gps.latency_budget_seconds', 5);
         $delays = [];
+        $fixAges = [];
+        $posts = [];
         foreach ($logs as $l) {
             if (! self::within($l['t'], $cutOff)) {
                 $delays[] = $l['delay'];
+                // Where the time goes, from trackers that report it: the fix's age when it was sent,
+                // and how long one send takes (connection, upload and the server's answer).
+                if ($l['fixAge'] !== null) {
+                    $fixAges[] = $l['fixAge'];
+                }
+                if ($l['post'] !== null) {
+                    $posts[] = $l['post'];
+                }
             }
         }
         sort($delays);
+        sort($fixAges);
+        sort($posts);
         $pct = self::share($delays, fn($d) => $d <= $limit);
 
         return [
-            'samples'    => count($delays),
-            'limit'      => $limit,
-            'target_pct' => (int) $targets['latency_target_pct'],
-            'pct'        => $pct,
-            'median'     => self::percentile($delays, 0.5),
-            'p95'        => self::percentile($delays, 0.95),
-            'max'        => $delays ? end($delays) : null,
-            'pass'       => $pct === null ? null : $pct >= $targets['latency_target_pct'],
+            'samples'      => count($delays),
+            'limit'        => $limit,
+            'target_pct'   => (int) $targets['latency_target_pct'],
+            'pct'          => $pct,
+            'median'       => self::percentile($delays, 0.5),
+            'p95'          => self::percentile($delays, 0.95),
+            'max'          => $delays ? end($delays) : null,
+            'fix_age_s'    => $fixAges ? round(self::percentile($fixAges, 0.5) / 1000, 1) : null,
+            'send_s'       => $posts ? round(self::percentile($posts, 0.5) / 1000, 1) : null,
+            'pass'         => $pct === null ? null : $pct >= $targets['latency_target_pct'],
         ];
     }
 
@@ -185,7 +288,7 @@ class FieldTestReport
      * The farthest live position during the range walks. "lost" tells whether the walk actually
      * reached the point where updates stopped; until then the farthest distance is only a lower bound.
      */
-    private static function range(array $logs, array $range, ?array $ref, int $interval, int $now, array $targets): array
+    private static function range(array $logs, array $range, ?array $ref, int $interval, int $now): array
     {
         $farthest = null;
         $live = 0;
@@ -213,25 +316,20 @@ class FieldTestReport
             }
         }
 
-        $target = (int) $targets['range_target_meters'];
-
         return [
             'samples'       => $live,
             'has_reference' => (bool) $ref,
-            'target_m'      => $target,
             'farthest_m'    => self::round1($farthest),
             'current_m'     => self::isOpen($range) ? self::round1($current) : null,
             'lost'          => $lost,
-            'pass'          => $farthest === null ? null : $farthest >= $target,
         ];
     }
 
-    private static function reliability(array $logs, array $cutOff, int $end, int $interval, array $targets): array
+    private static function reliability(array $logs, array $cutOff, int $end, int $interval): array
     {
         $first = $logs[0]['t'] ?? null;
         if ($first === null) {
-            return ['samples' => 0, 'received' => 0, 'missed' => 0, 'pct' => null,
-                'target_pct' => (int) $targets['reliability_target_pct'], 'pass' => null];
+            return ['samples' => 0, 'received' => 0, 'missed' => 0, 'pct' => null];
         }
 
         // Counted from the first position, so the GPS warming up is not held against it.
@@ -256,16 +354,14 @@ class FieldTestReport
         $pct = ($received + $missed) > 0 ? round(100 * $received / ($received + $missed), 1) : null;
 
         return [
-            'samples'    => $received + $missed,
-            'received'   => $received,
-            'missed'     => $missed,
-            'pct'        => $pct,
-            'target_pct' => (int) $targets['reliability_target_pct'],
-            'pass'       => $pct === null ? null : $pct >= $targets['reliability_target_pct'],
+            'samples'  => $received + $missed,
+            'received' => $received,
+            'missed'   => $missed,
+            'pct'      => $pct,
         ];
     }
 
-    private static function geofence(array $logs, array $marks, array $zone, int $now, array $targets): array
+    private static function geofence(array $logs, array $marks, array $zone, int $now): array
     {
         // Crossings the system saw: a position whose inside/outside differs from the one before.
         $detected = [];
@@ -316,7 +412,7 @@ class FieldTestReport
             }
         }
 
-        return self::tally($rows, $false, (int) $targets['geofence_target_pct']) + ['crossings' => $rows, 'false' => $false];
+        return self::tally($rows, $false) + ['crossings' => $rows, 'false' => $false];
     }
 
     /**
@@ -325,7 +421,7 @@ class FieldTestReport
      * follow, and "Signal Restored" when positions arrive again. Any other such alert is false.
      * A tester tapping late, or turning off the wrong phone, cannot change the result.
      */
-    private static function alerts(FieldTest $test, array $logs, array $off, array $range, int $end, int $now, array $targets): array
+    private static function alerts(FieldTest $test, array $logs, array $off, array $range, int $end, int $now): array
     {
         $silent = TrackerWatchdog::onlineWindow();
         $lostWait = $silent + self::LOST_EXTRA;
@@ -426,12 +522,12 @@ class FieldTestReport
             usort($false, fn($x, $y) => strcmp($x['alert_at'], $y['alert_at']));
         }
 
-        return self::tally($rows, $false, (int) $targets['alert_target_pct'])
+        return self::tally($rows, $false)
             + ['trials' => $rows, 'false' => $false, 'silent_seconds' => $silent];
     }
 
     /** Correct ÷ (correct + missed + false); rows still waiting are left out. */
-    private static function tally(array $rows, array $false, int $target): array
+    private static function tally(array $rows, array $false): array
     {
         $ok = count(array_filter($rows, fn($r) => $r['status'] === 'ok'));
         $missed = count(array_filter($rows, fn($r) => $r['status'] === 'missed'));
@@ -439,13 +535,11 @@ class FieldTestReport
         $pct = $total > 0 ? round(100 * $ok / $total, 1) : null;
 
         return [
-            'samples'    => $total,
-            'correct'    => $ok,
-            'missed'     => $missed,
-            'false_count'=> count($false),
-            'pct'        => $pct,
-            'target_pct' => $target,
-            'pass'       => $pct === null ? null : $pct >= $target,
+            'samples'     => $total,
+            'correct'     => $ok,
+            'missed'      => $missed,
+            'false_count' => count($false),
+            'pct'         => $pct,
         ];
     }
 

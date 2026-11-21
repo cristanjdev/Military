@@ -126,6 +126,13 @@ String updateMd5;
 size_t updateSize = 0;
 int updateTries = 0;
 unsigned long lastUpdateTryMs = 0;
+/* Field test timings (millis() since power-on, 0 = not yet): joined the hotspot, saw the first
+ * satellite, had the first good fix. Sent once, with the first position after power-on. */
+unsigned long bootWifiMs = 0;
+unsigned long bootSatsMs = 0;
+unsigned long bootFixMs = 0;
+bool startupSent = false;
+unsigned long lastPostMs = 0; /* how long the last successful send took, start to answer */
 
 /* ---------------------------------------------------------------------------
  * Keep every type declaration ABOVE the first function definition in this file.
@@ -293,6 +300,7 @@ void feedGps() {
 #if !SIMULATE_GPS
   while (GPSSerial.available()) gps.encode(GPSSerial.read());
 #endif
+  noteStartup();
 }
 
 unsigned long satellitesUsed() { return gps.satellites.isValid() ? gps.satellites.value() : 0UL; }
@@ -324,6 +332,33 @@ FixState currentFix() {
   if (gps.location.age() > FIX_MAX_AGE_MS) return FIX_STALE;
   if (satellitesUsed() < MIN_SATELLITES || currentHdop() > MAX_HDOP) return FIX_WEAK;
   return FIX_GOOD;
+}
+
+/* The first time since power-on that a satellite is in view, and that the fix is good enough to send. */
+void noteStartup() {
+  if (bootSatsMs == 0 && satellitesInView() > 0) {
+    bootSatsMs = max(1UL, millis());
+    Serial.printf("[time] first satellite seen %.1f s after power-on\n", bootSatsMs / 1000.0);
+  }
+  if (bootFixMs == 0 && currentFix() == FIX_GOOD) {
+    bootFixMs = max(1UL, millis());
+    Serial.printf("[time] GPS fix %.1f s after power-on\n", bootFixMs / 1000.0);
+  }
+}
+
+/* Why the chip started, as a short code for the server. */
+const char* resetReasonCode() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON: return "power_on";
+    case ESP_RST_EXT: return "reset_button";
+    case ESP_RST_SW: return "restart";
+    case ESP_RST_PANIC: return "crash";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "watchdog";
+    case ESP_RST_BROWNOUT: return "brownout";
+    default: return "other";
+  }
 }
 
 /* "10.46.14.219" -> http://10.46.14.219:8000/api/v1/gps/ingest; "10.46.14.219:8001" keeps that
@@ -416,6 +451,10 @@ bool joinWifi() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    if (bootWifiMs == 0) {
+      bootWifiMs = max(1UL, millis());
+      Serial.printf("\n[time] Wi-Fi joined %.1f s after power-on", bootWifiMs / 1000.0);
+    }
     /* Channels 1-13 are 2.4 GHz, the only band the ESP32 can use. */
     Serial.printf("\n[wifi] connected  ip=%s  rssi=%d dBm  channel %d (2.4 GHz)\n",
                   WiFi.localIP().toString().c_str(), WiFi.RSSI(), WiFi.channel());
@@ -1142,6 +1181,7 @@ void loop() {
       emitSimulatedFix();
     }
   }
+  noteStartup();
 #else
   feedGps();
 #endif
@@ -1245,7 +1285,7 @@ void loop() {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   JsonDocument doc;
 #else
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<768> doc; /* room for the startup times */
 #endif
   doc["equipment_id"] = EQUIPMENT_ID;
   doc["device_id"] = DEVICE_ID;
@@ -1261,6 +1301,24 @@ void loop() {
 #if HAS_BATTERY_MONITOR
   addBattery(doc);
 #endif
+  /* For the field test: how old this fix is now, and how long the last send took. */
+  doc["fix_age_ms"] = gps.location.age();
+  if (lastPostMs > 0) doc["post_ms"] = lastPostMs;
+  /* Once per power-on: how long it took to get going. The uptime is taken at the fix, so the
+   * server can work out the power-on moment from the fix time. */
+  if (!startupSent) {
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+    JsonObject s = doc["startup"].to<JsonObject>();
+#else
+    JsonObject s = doc.createNestedObject("startup");
+#endif
+    const unsigned long age = gps.time.isValid() ? gps.time.age() : 0;
+    s["uptime_ms"] = millis() > age ? millis() - age : 0;
+    if (bootWifiMs) s["wifi_ms"] = bootWifiMs;
+    if (bootSatsMs) s["sats_ms"] = bootSatsMs;
+    if (bootFixMs) s["fix_ms"] = bootFixMs;
+    s["reason"] = resetReasonCode();
+  }
 
   String body;
   serializeJson(doc, body);
@@ -1277,8 +1335,12 @@ void loop() {
              gps.satellites.isValid() ? (unsigned long) gps.satellites.value() : 0UL);
 #endif
 
+  const unsigned long sendStart = millis();
   SendResult r = postFix(body);
+  /* Sent, or kept in the queue to send later: either way the startup times are on their way. */
+  if (r != SEND_DROP) startupSent = true;
   if (r == SEND_OK) {
+    lastPostMs = max(1UL, millis() - sendStart);
     lastAcceptedEpoch = epoch;
   } else if (r == SEND_RETRY) {
     enqueue(epoch, body);

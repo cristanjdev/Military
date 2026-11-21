@@ -27,6 +27,8 @@ class GpsLog extends Model
         'altitude_meters',
         'satellites',
         'battery_pct',
+        'fix_age_ms',
+        'post_ms',
         'is_inside_geofence',
         'device_id',
         'signature',

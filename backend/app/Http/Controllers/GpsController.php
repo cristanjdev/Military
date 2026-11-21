@@ -7,6 +7,7 @@ use App\Models\GpsLocation;
 use App\Models\GpsLog;
 use App\Models\Notification;
 use App\Models\RepairRequest;
+use App\Models\TrackerStartup;
 use App\Models\Transaction;
 use App\Services\AuditLogger;
 use App\Services\TrackerBattery;
@@ -29,6 +30,8 @@ class GpsController extends Controller
      */
     public function ingest(Request $request): JsonResponse
     {
+        // When the position reached the server, before any of the work below.
+        $arrivedAt = CarbonImmutable::now();
         $secret = (string) config('armory.iot.hmac_secret');
         if ($secret === '') {
             return response()->json(['message' => 'IoT secret not configured.'], 503);
@@ -62,6 +65,16 @@ class GpsController extends Controller
             'satellites'      => ['nullable', 'integer', 'min:0', 'max:64'],
             'battery_pct'     => ['nullable', 'integer', 'between:0,100'],
             'battery_mv'      => ['nullable', 'integer', 'between:0,10000'],
+            // Timings for the field test: how old the fix was when sent, how long the previous send took.
+            'fix_age_ms'      => ['nullable', 'integer', 'between:0,3600000'],
+            'post_ms'         => ['nullable', 'integer', 'between:0,3600000'],
+            // Sent once, with the first position after the tracker powers on.
+            'startup'           => ['nullable', 'array'],
+            'startup.uptime_ms' => ['required_with:startup', 'integer', 'between:0,86400000'],
+            'startup.wifi_ms'   => ['nullable', 'integer', 'between:0,86400000'],
+            'startup.sats_ms'   => ['nullable', 'integer', 'between:0,86400000'],
+            'startup.fix_ms'    => ['nullable', 'integer', 'between:0,86400000'],
+            'startup.reason'    => ['nullable', 'string', 'max:20'],
         ]);
         $batteryMv = isset($data['battery_mv']) ? (int) $data['battery_mv'] : null;
         $batteryPct = TrackerBattery::level(isset($data['battery_pct']) ? (int) $data['battery_pct'] : null, $batteryMv);
@@ -111,7 +124,8 @@ class GpsController extends Controller
                 $signatureHeader,
                 $request,
                 $batteryPct,
-                $batteryMv
+                $batteryMv,
+                $arrivedAt
             ) {
                 $firearm = FirearmEquipment::lockForUpdate()->findOrFail($data['equipment_id']);
                 $activeTransaction = $firearm->transactions()
@@ -126,7 +140,7 @@ class GpsController extends Controller
                         ->where('status', RepairRequest::STATUS_IN_REPAIR)
                         ->first();
                     if ($repair && (int) $firearm->availability_status === FirearmEquipment::STATUS_MAINTENANCE) {
-                        return $this->recordRepairPosition($firearm, $repair, $data, $capturedAt, $insideAny, $signatureHeader, $batteryPct, $batteryMv);
+                        return $this->recordRepairPosition($firearm, $repair, $data, $capturedAt, $arrivedAt, $insideAny, $signatureHeader, $batteryPct, $batteryMv);
                     }
                     return response()->json(['message' => 'No active firearm transaction accepts GPS updates.'], 409);
                 }
@@ -161,7 +175,7 @@ class GpsController extends Controller
                     'transaction_id'     => $activeTransaction->transaction_id,
                     'equipment_id'       => $firearm->equipment_id,
                     'captured_at'        => $capturedAt,
-                    'received_at'        => now(),
+                    'received_at'        => $arrivedAt,
                     'latitude'           => $data['latitude'],
                     'longitude'          => $data['longitude'],
                     'accuracy_meters'    => $data['accuracy_meters'] ?? null,
@@ -170,10 +184,13 @@ class GpsController extends Controller
                     'altitude_meters'    => $data['altitude_meters'] ?? null,
                     'satellites'         => $data['satellites'] ?? null,
                     'battery_pct'        => $batteryPct,
+                    'fix_age_ms'         => $data['fix_age_ms'] ?? null,
+                    'post_ms'            => $data['post_ms'] ?? null,
                     'is_inside_geofence' => $insideAny,
                     'device_id'          => $data['device_id'],
                     'signature'          => substr($signatureHeader, 0, 128),
                 ]);
+                $this->recordStartup($firearm, $data, $capturedAt, $arrivedAt);
 
                 TrackerWatchdog::seen($data['device_id'], $firearm, $activeTransaction);
                 TrackerBattery::record($firearm->equipment_id, $batteryPct, $batteryMv);
@@ -260,6 +277,7 @@ class GpsController extends Controller
         RepairRequest $repair,
         array $data,
         CarbonImmutable $capturedAt,
+        CarbonImmutable $arrivedAt,
         bool $insideAny,
         string $signatureHeader,
         ?int $batteryPct,
@@ -277,7 +295,7 @@ class GpsController extends Controller
             'repair_id'          => $repair->repair_id,
             'equipment_id'       => $firearm->equipment_id,
             'captured_at'        => $capturedAt,
-            'received_at'        => now(),
+            'received_at'        => $arrivedAt,
             'latitude'           => $data['latitude'],
             'longitude'          => $data['longitude'],
             'accuracy_meters'    => $data['accuracy_meters'] ?? null,
@@ -286,10 +304,13 @@ class GpsController extends Controller
             'altitude_meters'    => $data['altitude_meters'] ?? null,
             'satellites'         => $data['satellites'] ?? null,
             'battery_pct'        => $batteryPct,
+            'fix_age_ms'         => $data['fix_age_ms'] ?? null,
+            'post_ms'            => $data['post_ms'] ?? null,
             'is_inside_geofence' => $insideAny,
             'device_id'          => $data['device_id'],
             'signature'          => substr($signatureHeader, 0, 128),
         ]);
+        $this->recordStartup($firearm, $data, $capturedAt, $arrivedAt);
         TrackerBattery::record($firearm->equipment_id, $batteryPct, $batteryMv);
 
         return response()->json([
@@ -297,6 +318,30 @@ class GpsController extends Controller
             'gps_log_id'      => $log->gps_log_id,
             'inside_geofence' => $insideAny,
             'repair_id'       => $repair->repair_id,
+        ]);
+    }
+
+    /**
+     * The tracker's power-on timings, sent with its first position after it starts. It knows only
+     * its own uptime, so the power-on moment is the fix time minus the uptime when the fix was taken.
+     */
+    private function recordStartup(FirearmEquipment $firearm, array $data, CarbonImmutable $capturedAt, CarbonImmutable $arrivedAt): void
+    {
+        $s = $data['startup'] ?? null;
+        if (! $s) {
+            return;
+        }
+        $bootedAt = $capturedAt->subMilliseconds((int) $s['uptime_ms']);
+
+        TrackerStartup::create([
+            'equipment_id'      => $firearm->equipment_id,
+            'device_id'         => $data['device_id'],
+            'reason'            => $s['reason'] ?? null,
+            'booted_at'         => $bootedAt,
+            'wifi_ms'           => $s['wifi_ms'] ?? null,
+            'sats_ms'           => $s['sats_ms'] ?? null,
+            'fix_ms'            => $s['fix_ms'] ?? null,
+            'first_received_at' => $arrivedAt,
         ]);
     }
 

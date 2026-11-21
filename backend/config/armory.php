@@ -19,15 +19,13 @@ return [
         'battery_absent_mv'       => (int) env('ARMORY_BATTERY_ABSENT_MV', 2500),
     ],
 
-    // Targets for the field test page (FieldTestReport). Latency and distance use the
-    // gps.latency_budget_seconds and gps.accuracy_meters limits above.
+    // Targets for the field test page (FieldTestReport), from the manuscript (Chapter 1, Framework):
+    // "GPS latency ≤ 5 seconds at 95% reliability, location accuracy within 10 meters at 90% of
+    // updates". Latency and distance use the gps.latency_budget_seconds and gps.accuracy_meters
+    // limits above. The other measurements have no target in the manuscript: shown as measured.
     'field_test' => [
-        'latency_target_pct'     => (int) env('ARMORY_TEST_LATENCY_PCT', 95),     // % of updates within the latency limit
-        'distance_target_pct'    => (int) env('ARMORY_TEST_DISTANCE_PCT', 90),    // % of positions within the distance limit
-        'range_target_meters'    => (int) env('ARMORY_TEST_RANGE_METERS', 10),    // phone-to-tracker distance that must still work
-        'reliability_target_pct' => (int) env('ARMORY_TEST_RELIABILITY_PCT', 95),
-        'geofence_target_pct'    => (int) env('ARMORY_TEST_GEOFENCE_PCT', 95),
-        'alert_target_pct'       => (int) env('ARMORY_TEST_ALERT_PCT', 95),
+        'latency_target_pct'  => (int) env('ARMORY_TEST_LATENCY_PCT', 95),   // % of updates within the latency limit
+        'distance_target_pct' => (int) env('ARMORY_TEST_DISTANCE_PCT', 90),  // % of positions within the distance limit
     ],
 
     'session' => [
