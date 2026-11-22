@@ -210,6 +210,56 @@ class FieldTestTest extends TestCase
         $this->assertEquals(2.5, $m['metrics']['latency']['send_s']);
     }
 
+    public function test_reliability_stops_at_the_last_position(): void
+    {
+        $id = $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])->json('test.field_test_id');
+
+        // Every 5 s up to 300 s, with two missed on the way. The test is finished four hours later.
+        foreach (range(30, 300, 5) as $s) {
+            if ($s !== 100 && $s !== 200) {
+                $this->position($s, meters: 5, delay: 2);
+            }
+        }
+
+        $this->at(400);
+        $r = $this->getJson("/api/v1/field-tests/{$id}")->assertOk()->json('report.metrics.reliability');
+        $this->assertSame(53, $r['received']);
+        $this->assertSame(2, $r['missed']); // gaps before the last position still count
+        $this->assertSame(100, $r['silent_after_s']);
+
+        $this->at(14700);
+        $r = $this->postJson("/api/v1/field-tests/{$id}/finish")->assertOk()->json('report.metrics.reliability');
+        $this->assertSame(53, $r['received']);
+        $this->assertSame(2, $r['missed']);
+        $this->assertEquals(96.4, $r['pct']);
+        $this->assertSame(14400, $r['silent_after_s']);
+    }
+
+    public function test_silence_with_the_hotspot_off_is_not_reported_after_the_last_position(): void
+    {
+        $id = $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])->json('test.field_test_id');
+        foreach (range(30, 300, 5) as $s) {
+            $this->position($s, meters: 5, delay: 2);
+        }
+        $this->tap($id, 301, 'hotspot_off');
+
+        $this->at(900);
+        $r = $this->getJson("/api/v1/field-tests/{$id}")->assertOk()->json('report.metrics.reliability');
+        $this->assertSame(0, $r['missed']);
+        $this->assertSame(1, $r['silent_after_s']); // only the second before the tap
+    }
+
+    public function test_a_single_position_is_counted(): void
+    {
+        $id = $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])->json('test.field_test_id');
+        $this->position(30, meters: 5, delay: 2);
+
+        $this->at(90);
+        $r = $this->getJson("/api/v1/field-tests/{$id}")->assertOk()->json('report.metrics.reliability');
+        $this->assertSame(1, $r['received']);
+        $this->assertSame(0, $r['missed']);
+    }
+
     public function test_steps_must_follow_in_order(): void
     {
         $id = $this->postJson('/api/v1/field-tests', ['equipment_id' => $this->firearm->equipment_id])->json('test.field_test_id');

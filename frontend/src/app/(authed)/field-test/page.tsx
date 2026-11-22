@@ -63,7 +63,8 @@ interface Report {
     };
     distance: { samples: number; has_reference: boolean; limit: number; target_pct: number; pct: number | null; median: number | null; p90: number | null; max: number | null; pass: boolean | null };
     range: { samples: number; has_reference: boolean; farthest_m: number | null; current_m: number | null; lost: boolean };
-    reliability: { samples: number; received: number; missed: number; pct: number | null };
+    /** silent_after_s: silence after the last position, left out of pct. Missing until the backend has deployed. */
+    reliability: { samples: number; received: number; missed: number; pct: number | null; silent_after_s?: number };
     geofence: Tally & { crossings: Crossing[]; false: { kind: string; detected_at: string }[] };
     alerts: Tally & { trials: AlertTrial[]; false: { kind: string; alert_at: string }[]; silent_seconds: number };
     startup: {
@@ -148,7 +149,7 @@ function parseCoords(text: string): { latitude: number; longitude: number } | nu
 /* ---------- results table ---------- */
 
 /** target: null when the manuscript sets none; the row then shows the measurement only. */
-interface ResultRow { metric: string; target: string | null; actual: string; detail: string; pass: boolean | null }
+interface ResultRow { metric: string; target: string | null; actual: string; detail: string; note?: string; pass: boolean | null }
 
 const secs = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${v} s`);
 
@@ -169,6 +170,11 @@ function resultRows(r: Report): ResultRow[] {
     l.fix_age_s !== null ? `the fix was ${secs(l.fix_age_s)} old when sent` : "",
     l.send_s !== null ? `one send takes ${secs(l.send_s)}` : "",
   ].filter(Boolean).join(", ");
+  const silentAfter = rel.silent_after_s ?? 0;
+  // The same limit that turns the status bar amber.
+  const stopped = r.last_position && silentAfter > r.interval_seconds * 2 + 15
+    ? `No positions after ${fmtDate(r.last_position.captured_at, "MMM d, h:mm:ss a")}: ${duration(silentAfter)} of silence, not counted`
+    : undefined;
   return [
     {
       metric: "Update latency",
@@ -200,6 +206,7 @@ function resultRows(r: Report): ResultRow[] {
       target: null,
       actual: rel.pct === null ? "No data yet" : `${pct(rel.pct)} of updates received`,
       detail: rel.samples ? `${rel.received} received, ${rel.missed} missed (the tracker sends every ${r.interval_seconds} s)` : "",
+      note: stopped,
       pass: null,
     },
     {
@@ -231,7 +238,7 @@ function ResultsTable({ report, test }: { report: Report; test: FieldTest }) {
   const copy = async () => {
     const text = [
       ["Metric", "Target", "Actual", "Result"].join("\t"),
-      ...rows.map((r) => [r.metric, r.target ?? "—", r.actual + (r.detail ? ` (${r.detail})` : ""),
+      ...rows.map((r) => [r.metric, r.target ?? "—", r.actual + (r.detail ? ` (${r.detail})` : "") + (r.note ? `. ${r.note}` : ""),
         r.target === null ? "—" : r.pass === null ? "No data" : r.pass ? "Met" : "Not met"].join("\t")),
     ].join("\n");
     try {
@@ -269,6 +276,7 @@ function ResultsTable({ report, test }: { report: Report; test: FieldTest }) {
             {r.target !== null && <p className="mt-1 text-xs text-steel-400">Target: {r.target}</p>}
             <p className="mt-1 text-sm text-steel-100">{r.actual}</p>
             {r.detail && <p className="text-xs text-steel-400">{r.detail}</p>}
+            {r.note && <p className="text-xs text-amber-300">{r.note}</p>}
           </li>
         ))}
       </ul>
@@ -289,6 +297,7 @@ function ResultsTable({ report, test }: { report: Report; test: FieldTest }) {
               <td className="py-2.5 pr-3">
                 <p className="text-steel-100">{r.actual}</p>
                 {r.detail && <p className="text-xs text-steel-400">{r.detail}</p>}
+                {r.note && <p className="text-xs text-amber-300">{r.note}</p>}
               </td>
               <td className="py-2.5">{r.target !== null ? <ResultPill pass={r.pass} /> : <span className="text-steel-500">—</span>}</td>
             </tr>

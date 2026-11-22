@@ -16,7 +16,8 @@ use App\Models\TrackerStartup;
  *   Distance error      how far the positions are from the marked spot while the tracker sits on it
  *   Hotspot range       the farthest the tracker got from the phone (on the marked spot) and still sent live
  *   Signal reliability  positions received ÷ positions expected, one per tracker interval (measured from
- *                       the positions themselves, since a tracker's config may differ from the server's)
+ *                       the positions themselves, since a tracker's config may differ from the server's),
+ *                       up to the last position; the silence after it is reported by itself
  *   Startup times       seconds from power-on to Wi-Fi, first satellite, GPS fix and first position
  *
  * Only latency and distance have targets: the two the manuscript states. The rest are reported as measured.
@@ -329,12 +330,16 @@ class FieldTestReport
     {
         $first = $logs[0]['t'] ?? null;
         if ($first === null) {
-            return ['samples' => 0, 'received' => 0, 'missed' => 0, 'pct' => null];
+            return ['samples' => 0, 'received' => 0, 'missed' => 0, 'pct' => null, 'silent_after_s' => 0];
         }
 
-        // Counted from the first position, so the GPS warming up is not held against it.
+        // Counted from the first position to the last: neither the GPS warming up nor the hours until
+        // someone taps Finish are held against it. One second more, so a lone position is still a period.
+        $last = $logs[count($logs) - 1]['t'];
         $gaps = array_map(fn($w) => [$w[0], $w[1] + self::RECONNECT_GRACE], $cutOff);
-        $segments = self::subtract([$first, $end], $gaps);
+        $segments = self::subtract([$first, $last + 1], $gaps);
+        // The silence after the last position is shown by itself: it may be the testers stopping or the tracker failing.
+        $silentAfter = array_sum(array_map(fn($s) => $s[1] - $s[0], self::subtract([$last, $end], $gaps)));
 
         $received = 0;
         $missed = 0;
@@ -358,6 +363,7 @@ class FieldTestReport
             'received' => $received,
             'missed'   => $missed,
             'pct'      => $pct,
+            'silent_after_s' => $silentAfter,
         ];
     }
 
