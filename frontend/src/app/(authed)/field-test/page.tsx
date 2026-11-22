@@ -148,6 +148,12 @@ function parseCoords(text: string): { latitude: number; longitude: number } | nu
 
 /* ---------- results table ---------- */
 
+/** When a test ended: the time alone, with the date as well if it ran into another day. */
+function endText(start: string, end: string): string {
+  const day = "MMMM d, yyyy";
+  return fmtDate(end, fmtDate(start, day) === fmtDate(end, day) ? "h:mm a" : `${day} h:mm a`);
+}
+
 /** target: null when the manuscript sets none; the row then shows the measurement only. */
 interface ResultRow { metric: string; target: string | null; actual: string; detail: string; note?: string; pass: boolean | null }
 
@@ -256,7 +262,7 @@ function ResultsTable({ report, test }: { report: Report; test: FieldTest }) {
           <h2 className="text-base font-semibold text-olive-50">{test.ended_at ? "Results" : "Results so far"}</h2>
           <p className="text-xs text-steel-400">
             {test.firearm?.serial_number ?? "Firearm"} · {fmtDate(test.started_at, "MMMM d, yyyy h:mm a")}
-            {test.ended_at ? ` to ${fmtDate(test.ended_at, "h:mm a")}` : ", still running"}
+            {test.ended_at ? ` to ${endText(test.started_at, test.ended_at)}` : ", still running"}
           </p>
         </div>
         <button type="button" onClick={copy} className="btn-secondary text-xs"><Copy className="h-3.5 w-3.5" /> Copy table</button>
