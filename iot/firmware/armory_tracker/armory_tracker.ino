@@ -303,6 +303,50 @@ void feedGps() {
   noteStartup();
 }
 
+#if !SIMULATE_GPS
+/* Waits briefly for the GPS module to confirm a setting (UBX ACK-ACK). The NMEA bytes read meanwhile
+ * still go to the parser. */
+bool waitUbxAck(uint8_t cls, uint8_t id) {
+  const uint8_t ack[] = {0xB5, 0x62, 0x05, 0x01, 0x02, 0x00, cls, id};
+  size_t at = 0;
+  const unsigned long start = millis();
+  while (millis() - start < 600) {
+    while (GPSSerial.available()) {
+      const uint8_t b = GPSSerial.read();
+      gps.encode(b);
+      at = b == ack[at] ? at + 1 : (b == ack[0] ? 1 : 0);
+      if (at == sizeof(ack)) return true;
+    }
+    delay(5);
+  }
+  return false;
+}
+
+/* At 9600 baud the module's default output (positions plus the full GPS + GLONASS satellite lists
+ * every second) is more than the wire carries, so it queued up inside the module and every position
+ * was read about 10 s after it was taken (field tests: the delay grew from 4 s to 11 s within 90 s
+ * of power-on). Keep the two sentences the position comes from (GGA, RMC), the satellite lists every
+ * 3 s (satellites in view), and stop the rest (GLL, GSA, VTG). Sent at every start: the module forgets
+ * it when it loses power. Returns how many of the 6 settings the module confirmed. */
+int quietGps() {
+  struct Rate { uint8_t id; uint8_t every; };
+  const Rate rates[] = {{0x01, 0} /* GLL */, {0x02, 0} /* GSA */, {0x05, 0} /* VTG */,
+                        {0x03, 3} /* GSV */, {0x00, 1} /* GGA */, {0x04, 1} /* RMC */};
+  int confirmed = 0;
+  for (const Rate& r : rates) {
+    /* UBX CFG-MSG for the port it arrives on: NMEA class 0xF0, message id, rate in fixes. */
+    uint8_t pkt[11] = {0xB5, 0x62, 0x06, 0x01, 0x03, 0x00, 0xF0, r.id, r.every, 0, 0};
+    for (int i = 2; i < 9; i++) {
+      pkt[9] += pkt[i];
+      pkt[10] += pkt[9];
+    }
+    GPSSerial.write(pkt, sizeof(pkt));
+    if (waitUbxAck(0x06, 0x01)) confirmed++;
+  }
+  return confirmed;
+}
+#endif
+
 unsigned long satellitesUsed() { return gps.satellites.isValid() ? gps.satellites.value() : 0UL; }
 unsigned long gsvCount(TinyGPSCustom &field) {
   /* A system that stopped reporting (out of view) must not keep its old count. */
@@ -1102,6 +1146,15 @@ void setup() {
   GPSSerial.setRxBufferSize(2048);
   GPSSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.printf("[gps] UART2 rx=%d tx=%d @%d baud\n", GPS_RX_PIN, GPS_TX_PIN, GPS_BAUD);
+  {
+    const int confirmed = quietGps();
+    if (confirmed == 6) {
+      Serial.println("[gps] module set to send only what the tracker uses (no queue, no delay): confirmed");
+    } else {
+      Serial.printf("[gps] module confirmed %d of 6 output settings <- if 0: GPS RX -> D19 loose, or a module "
+                    "that ignores u-blox commands; positions still work but may arrive about 10 s late\n", confirmed);
+    }
+  }
 #endif
 
 #if HAS_BATTERY_MONITOR
